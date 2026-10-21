@@ -11,8 +11,8 @@ import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionValues.js";
 import { ghidraExtensionResultSchema } from "./extensions/GhidraExtensions.js";
 import { GHIDRA_MIPS_SOFT_FLOAT_STORAGE } from "./GhidraMipsProfile.js";
 
-/** Exact methods proved by the bridge handshake after auto-analysis. */
-export const GHIDRA_SESSION_CAPABILITIES = [
+/** Methods every bridge must prove in its handshake after auto-analysis. */
+export const GHIDRA_SESSION_BASELINE_CAPABILITIES = [
   "ping",
   "shutdown",
   ...GHIDRA_INVENTORY_OPERATIONS,
@@ -25,6 +25,9 @@ export const GHIDRA_MUTATING_OPERATIONS: ReadonlySet<string> = new Set([
   ...GHIDRA_NAMING_OPERATIONS,
 ]);
 
+/** Baseline plus optional extended methods a bridge may additionally advertise. */
+export const GHIDRA_ALL_KNOWN_CAPABILITIES: ReadonlySet<string> = new Set(GHIDRA_SESSION_BASELINE_CAPABILITIES);
+
 // Shared wire budget: Java bounds the aggregate before serializing the handshake.
 const PDB_ATTRIBUTE_UTF16_BUDGET = 4096;
 const pdbAttributeSchema = z
@@ -32,11 +35,15 @@ const pdbAttributeSchema = z
   .max(PDB_ATTRIBUTE_UTF16_BUDGET)
   .nullable();
 
-const capabilitySchema = z.enum(GHIDRA_SESSION_CAPABILITIES);
+const capabilitySchema = z
+  .string()
+  .refine((capability) => GHIDRA_ALL_KNOWN_CAPABILITIES.has(capability));
+
+const BRIDGE_NAMES = ["REA Ghidra bridge", "REA pyGhidra bridge"] as const;
 
 const sessionInfoSchema = z
   .object({
-    name: z.literal("REA Ghidra bridge"),
+    name: z.enum(BRIDGE_NAMES),
     run_id: z.string().uuid(),
     profile_digest: z.string().regex(/^[a-f0-9]{64}$/u),
     provider: z
@@ -144,7 +151,26 @@ export const ghidraPdbLimitations = (
   ];
 };
 
-/** Require exact run, provider, and profile identity from the Java bridge. */
+/** Mutation capabilities are forbidden on read-only bridges, required otherwise. */
+const hasValidCapabilities = (
+  advertised: readonly string[],
+  readOnly: boolean,
+): boolean => {
+  const permitted = (capability: string): boolean =>
+    !readOnly || !GHIDRA_MUTATING_OPERATIONS.has(capability);
+  return (
+    new Set(advertised).size === advertised.length &&
+    advertised.every(
+      (capability) =>
+        GHIDRA_ALL_KNOWN_CAPABILITIES.has(capability) && permitted(capability),
+    ) &&
+    GHIDRA_SESSION_BASELINE_CAPABILITIES.filter(permitted).every((capability) =>
+      advertised.includes(capability),
+    )
+  );
+};
+
+/** Require exact run, provider, and profile identity from the bridge. */
 export const parseGhidraSessionInfo = (
   value: JsonValue,
   expected: {
@@ -159,14 +185,10 @@ export const parseGhidraSessionInfo = (
 ): Result<GhidraSessionInfo, Error> => {
   const parsed = sessionInfoSchema.safeParse(value);
   const readOnly = expected.expectedReadOnly ?? false;
-  const expectedCapabilities = GHIDRA_SESSION_CAPABILITIES.filter(
-    (capability) => !readOnly || !GHIDRA_MUTATING_OPERATIONS.has(capability),
-  );
   if (
     !parsed.success ||
     parsed.data.run_id !== expected.runId ||
     parsed.data.read_only !== readOnly ||
-    parsed.data.capabilities.length !== expectedCapabilities.length ||
     parsed.data.provider.version !== expected.providerVersion ||
     parsed.data.profile_digest !== expected.profileDigest ||
     parsed.data.target.sha256 !== expected.targetSha256 ||
@@ -175,10 +197,7 @@ export const parseGhidraSessionInfo = (
     (expected.expectedCompilerSpecId !== undefined &&
       parsed.data.target.compiler_spec_id !==
         expected.expectedCompilerSpecId) ||
-    new Set(parsed.data.capabilities).size !== expectedCapabilities.length ||
-    expectedCapabilities.some(
-      (capability) => !parsed.data.capabilities.includes(capability),
-    ) ||
+    !hasValidCapabilities(parsed.data.capabilities, readOnly) ||
     parsed.data.analysis_complete === parsed.data.analysis_timed_out
   )
     return err(new Error("Ghidra bridge handshake identity is invalid"));

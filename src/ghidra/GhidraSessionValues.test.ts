@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  GHIDRA_SESSION_CAPABILITIES,
+  GHIDRA_ALL_KNOWN_CAPABILITIES,
+  GHIDRA_SESSION_BASELINE_CAPABILITIES,
   GHIDRA_MUTATING_OPERATIONS,
   parseGhidraSessionInfo,
 } from "./GhidraSessionValues.js";
@@ -25,7 +26,7 @@ const session = (
   read_only: false,
   analysis_complete: true,
   analysis_timed_out: false,
-  capabilities: [...GHIDRA_SESSION_CAPABILITIES],
+  capabilities: [...GHIDRA_SESSION_BASELINE_CAPABILITIES],
   target: {
     name: "legacy.exe",
     language_id: language,
@@ -189,5 +190,62 @@ describe("Ghidra mutation handshake", () => {
         ).ok,
       ).toBe(false);
     }
+  });
+});
+
+describe("Ghidra bridge name and capability relaxation", () => {
+  it.each(["REA Ghidra bridge", "REA pyGhidra bridge"])(
+    "accepts the %s name",
+    (name) => {
+      expect(parseGhidraSessionInfo({ ...session(), name }, expected).ok).toBe(
+        true,
+      );
+    },
+  );
+  it("rejects an unknown bridge name", () => {
+    expect(
+      parseGhidraSessionInfo({ ...session(), name: "Unknown bridge" }, expected)
+        .ok,
+    ).toBe(false);
+  });
+  it("accepts a handshake carrying exactly the baseline capabilities", () => {
+    expect(
+      parseGhidraSessionInfo(
+        {
+          ...session(),
+          capabilities: [...GHIDRA_SESSION_BASELINE_CAPABILITIES],
+        },
+        expected,
+      ).ok,
+    ).toBe(true);
+  });
+  it("rejects a handshake missing a baseline capability", () => {
+    expect(
+      parseGhidraSessionInfo(
+        {
+          ...session(),
+          capabilities: GHIDRA_SESSION_BASELINE_CAPABILITIES.slice(1),
+        },
+        expected,
+      ).ok,
+    ).toBe(false);
+  });
+  it("rejects a capability outside the known set", () => {
+    expect(
+      parseGhidraSessionInfo(
+        {
+          ...session(),
+          capabilities: [
+            ...GHIDRA_SESSION_BASELINE_CAPABILITIES,
+            "totally_unknown_op",
+          ],
+        },
+        expected,
+      ).ok,
+    ).toBe(false);
+  });
+  it("keeps every baseline capability inside the known set", () => {
+    for (const capability of GHIDRA_SESSION_BASELINE_CAPABILITIES)
+      expect(GHIDRA_ALL_KNOWN_CAPABILITIES.has(capability)).toBe(true);
   });
 });

@@ -13,7 +13,7 @@ import type { GhidraInstallationHost } from "../../../src/ghidra/GhidraInstallat
 import type { GhidraOperation } from "../../../src/ghidra/GhidraClient.js";
 import { GhidraProvider } from "../../../src/ghidra/GhidraProvider.js";
 import type { GhidraProviderClientFactory } from "../../../src/ghidra/GhidraProviderClient.js";
-import { GHIDRA_SESSION_CAPABILITIES } from "../../../src/ghidra/GhidraSessionValues.js";
+import { GHIDRA_SESSION_BASELINE_CAPABILITIES } from "../../../src/ghidra/GhidraSessionValues.js";
 import type { GhidraSessionInfo } from "../../../src/ghidra/GhidraSessionValues.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -135,7 +135,7 @@ const sessionInfo = (profileDigest: string, targetSha256: string) => ({
   read_only: false as const,
   analysis_complete: true,
   analysis_timed_out: false,
-  capabilities: [...GHIDRA_SESSION_CAPABILITIES],
+  capabilities: [...GHIDRA_SESSION_BASELINE_CAPABILITIES],
   target: {
     name: "fixture",
     language_id: "x86:LE:64:default",

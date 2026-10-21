@@ -28,7 +28,7 @@ import {
 } from "../dist/ghidra/GhidraProviderCapabilities.js";
 import {
   GHIDRA_MUTATING_OPERATIONS,
-  GHIDRA_SESSION_CAPABILITIES,
+  GHIDRA_SESSION_BASELINE_CAPABILITIES,
 } from "../dist/ghidra/GhidraSessionValues.js";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
@@ -39,7 +39,7 @@ import { verifyGhidraFileOffsets } from "./lib/real-ghidra-file-offsets.mjs";
 import { verifyWindowsGhidraByteSearch } from "./lib/ghidra-windows-byte-search.mjs";
 
 const verifierRun = createVerifierRun();
-const SESSION_CAPABILITIES = GHIDRA_SESSION_CAPABILITIES.filter(
+const SESSION_CAPABILITIES = GHIDRA_SESSION_BASELINE_CAPABILITIES.filter(
   (name) => !GHIDRA_MUTATING_OPERATIONS.has(name),
 );
 

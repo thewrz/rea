@@ -15,7 +15,7 @@ import {
   ghidraPinnedMipsLanguage,
 } from "./GhidraMipsProfile.js";
 import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixture.js";
-import { GHIDRA_SESSION_CAPABILITIES } from "./GhidraSessionValues.js";
+import { GHIDRA_SESSION_BASELINE_CAPABILITIES } from "./GhidraSessionValues.js";
 import type { GhidraMipsSoftFloatReport } from "./GhidraMipsProfile.js";
 import {
   ghidraPinnedLanguage,
@@ -311,7 +311,7 @@ const session = async (
           read_only: false,
           analysis_complete: true,
           analysis_timed_out: false,
-          capabilities: [...GHIDRA_SESSION_CAPABILITIES],
+          capabilities: [...GHIDRA_SESSION_BASELINE_CAPABILITIES],
           target: {
             name: "fixture.elf",
             language_id: "MIPS:LE:32:default",

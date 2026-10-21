@@ -12,7 +12,7 @@ import { err, ok } from "../domain/result.js";
 import { silentLogger } from "../logger.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 import { GhidraSessionError } from "./GhidraSessionError.js";
-import { GHIDRA_SESSION_CAPABILITIES } from "./GhidraSessionValues.js";
+import { GHIDRA_SESSION_BASELINE_CAPABILITIES } from "./GhidraSessionValues.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 
 const TARGET: BinaryTarget = {
@@ -67,7 +67,7 @@ const fixture = (version = "12.1.4", coverage?: RelationshipCoverage) => {
           read_only: false,
           analysis_complete: true,
           analysis_timed_out: false,
-          capabilities: [...GHIDRA_SESSION_CAPABILITIES],
+          capabilities: [...GHIDRA_SESSION_BASELINE_CAPABILITIES],
           target: {
             name: "fixture",
             language_id: "x86:LE:64:default",

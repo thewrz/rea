@@ -42,7 +42,7 @@ import type { GhidraTargetSnapshot } from "./GhidraClient.js";
 import type { GhidraProviderClientFactory } from "./GhidraProviderClient.js";
 import type { GhidraHeadlessLauncher } from "./GhidraLauncher.js";
 import type { GhidraInstallationHost } from "./GhidraInstallation.js";
-import { GHIDRA_SESSION_CAPABILITIES } from "./GhidraSessionValues.js";
+import { GHIDRA_SESSION_BASELINE_CAPABILITIES } from "./GhidraSessionValues.js";
 import { err, ok } from "../domain/result.js";
 import type { Result } from "../domain/result.js";
 import { GhidraSessionError } from "./GhidraSessionError.js";
@@ -2572,7 +2572,7 @@ const sessionInfo = () => ({
   read_only: false as const,
   analysis_complete: true,
   analysis_timed_out: false,
-  capabilities: [...GHIDRA_SESSION_CAPABILITIES],
+  capabilities: [...GHIDRA_SESSION_BASELINE_CAPABILITIES],
   target: {
     name: "fixture",
     language_id: "x86:LE:64:default",

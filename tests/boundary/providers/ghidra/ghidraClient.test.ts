@@ -44,7 +44,7 @@ import type { ProviderProcessHandle } from "../../../../src/process/ProviderProc
 import type { GhidraTransportKind } from "../../../../src/ghidra/GhidraTransport.js";
 import {
   GHIDRA_MUTATING_OPERATIONS,
-  GHIDRA_SESSION_CAPABILITIES,
+  GHIDRA_SESSION_BASELINE_CAPABILITIES,
 } from "../../../../src/ghidra/GhidraSessionValues.js";
 import { waitForExit as waitForChildExit } from "../../../support/process/processFixture.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
@@ -924,7 +924,7 @@ describe("GhidraClient", () => {
     const client = clientFor(launcher);
 
     const started = await client.start();
-    const expectedCapabilities = GHIDRA_SESSION_CAPABILITIES.filter(
+    const expectedCapabilities = GHIDRA_SESSION_BASELINE_CAPABILITIES.filter(
       (value) =>
         HOST_TRANSPORT === "unix-socket" ||
         !GHIDRA_MUTATING_OPERATIONS.has(value),

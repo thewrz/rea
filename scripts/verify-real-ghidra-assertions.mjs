@@ -4,7 +4,7 @@ import { access } from "node:fs/promises";
 
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { SUPPORTED_GHIDRA_VERSION } from "../dist/ghidra/GhidraReleasePolicy.js";
-import { GHIDRA_SESSION_CAPABILITIES } from "../dist/ghidra/GhidraSessionValues.js";
+import { GHIDRA_SESSION_BASELINE_CAPABILITIES } from "../dist/ghidra/GhidraSessionValues.js";
 
 export function assertLocalProcedureInfo(info, expectedAddress) {
   if (
@@ -258,8 +258,9 @@ export async function assertSession(
     session.read_only !== false ||
     session.analysis_complete !== true ||
     session.analysis_timed_out !== false ||
-    session.capabilities.length !== GHIDRA_SESSION_CAPABILITIES.length ||
-    GHIDRA_SESSION_CAPABILITIES.some(
+    session.capabilities.length !==
+      GHIDRA_SESSION_BASELINE_CAPABILITIES.length ||
+    GHIDRA_SESSION_BASELINE_CAPABILITIES.some(
       (name) => !session.capabilities.includes(name),
     ) ||
     !/^0x[0-9a-f]+$/u.test(session.target.image_base) ||
