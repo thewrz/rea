@@ -5,12 +5,84 @@ import type {
   DoctorProviderCheck,
   DoctorProviderInspection,
 } from "../application/Doctor.js";
+import { parseEnvironmentValues } from "../config/environment.js";
 import { inspectWindowsNativeReadiness } from "../process/WindowsAuthority.js";
 import {
   inspectGhidraInstallation,
   type GhidraInstallationCheck,
   type GhidraInstallationInspection,
 } from "./GhidraInstallation.js";
+import {
+  inspectPyGhidraAvailability,
+  resolveGhidraBackend,
+  type PyGhidraAvailability,
+} from "./PyGhidraBackend.js";
+
+type GhidraBackendSetting = "auto" | "java" | "pyghidra";
+
+/** Report the backend `resolveGhidraBackend` selects; a forced-but-unavailable pyGhidra fails. */
+export const projectGhidraBackendCheck = (
+  backend: GhidraBackendSetting,
+  availability: PyGhidraAvailability,
+  platform: NodeJS.Platform,
+): DoctorProviderCheck => {
+  try {
+    const selection = resolveGhidraBackend(
+      { ghidraBackend: backend },
+      availability,
+      platform,
+    );
+    return {
+      name: "backend",
+      ok: true,
+      code: null,
+      detail:
+        selection.selected === "pyghidra"
+          ? `Selected pyGhidra backend (pyghidra ${selection.pyghidraVersion}).`
+          : `Selected Java backend: ${selection.reason}`,
+      remediation: null,
+      classification: "config_drift",
+    };
+  } catch (cause: unknown) {
+    return {
+      name: "backend",
+      ok: false,
+      code: "runtime_unavailable",
+      detail: cause instanceof Error ? cause.message : String(cause),
+      remediation:
+        "Install pyGhidra in the interpreter named by REA_PYGHIDRA_PYTHON and confirm it can start against GHIDRA_INSTALL_DIR, or set REA_GHIDRA_BACKEND=auto or java.",
+      classification: "runtime_failure",
+    };
+  }
+};
+
+const probeSkipped: PyGhidraAvailability = {
+  available: false,
+  reason: "no usable Ghidra installation to start pyGhidra against",
+};
+
+const inspectGhidraBackend = async (
+  inspection: GhidraInstallationInspection,
+  environment: Readonly<NodeJS.ProcessEnv>,
+  signal: AbortSignal | undefined,
+): Promise<DoctorProviderCheck | undefined> => {
+  const settings = parseEnvironmentValues(environment);
+  if (!settings.ok) return undefined;
+  const backend = settings.value.REA_GHIDRA_BACKEND;
+  const probe =
+    backend !== "java" &&
+    inspection.platform !== "win32" &&
+    inspection.status === "available";
+  const availability = probe
+    ? await inspectPyGhidraAvailability(
+        settings.value.REA_PYGHIDRA_PYTHON,
+        inspection.installDir,
+        signal,
+        environment,
+      )
+    : probeSkipped;
+  return projectGhidraBackendCheck(backend, availability, inspection.platform);
+};
 
 /** Project installation and runtime-authority facts into the doctor contract. */
 export const projectGhidraDoctorInspection = (
@@ -73,19 +145,26 @@ export const inspectSystemGhidraProvider = async (
   signal?: AbortSignal,
 ): Promise<DoctorProviderInspection> => {
   try {
-    return projectGhidraDoctorInspection(
-      await inspectGhidraInstallation({
-        environment,
-        resourceOwner,
-        ...(signal === undefined ? {} : { signal }),
-        ...(environment.GHIDRA_INSTALL_DIR === undefined
-          ? {}
-          : { installDir: environment.GHIDRA_INSTALL_DIR }),
-        ...(environment.JAVA_HOME === undefined
-          ? {}
-          : { javaHome: environment.JAVA_HOME }),
-      }),
+    const installation = await inspectGhidraInstallation({
+      environment,
+      resourceOwner,
+      ...(signal === undefined ? {} : { signal }),
+      ...(environment.GHIDRA_INSTALL_DIR === undefined
+        ? {}
+        : { installDir: environment.GHIDRA_INSTALL_DIR }),
+      ...(environment.JAVA_HOME === undefined
+        ? {}
+        : { javaHome: environment.JAVA_HOME }),
+    });
+    const projected = projectGhidraDoctorInspection(installation);
+    const backendCheck = await inspectGhidraBackend(
+      installation,
+      environment,
+      signal,
     );
+    return backendCheck === undefined
+      ? projected
+      : { ...projected, checks: [...projected.checks, backendCheck] };
   } catch (cause: unknown) {
     throw analysisClientFailureForOperation(cause, "ghidra", "doctor");
   }

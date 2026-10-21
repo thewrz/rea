@@ -84,6 +84,8 @@ export const parseConfig = (
     ghidraInstallDir: env.GHIDRA_INSTALL_DIR,
     ghidraJavaHome: env.JAVA_HOME,
     ghidraStartupTimeoutMs: env.REA_GHIDRA_STARTUP_TIMEOUT_MS,
+    ghidraBackend: env.REA_GHIDRA_BACKEND,
+    pyghidraPythonPath: env.REA_PYGHIDRA_PYTHON,
     ...(env.REA_GHIDRA_LANGUAGE_ID === undefined
       ? {}
       : {

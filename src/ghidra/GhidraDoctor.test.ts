@@ -15,7 +15,11 @@ import {
   type GhidraInstallationHost,
   type GhidraInstallationInspection,
 } from "./GhidraInstallation.js";
-import { projectGhidraDoctorInspection } from "./GhidraDoctor.js";
+import {
+  inspectSystemGhidraProvider,
+  projectGhidraBackendCheck,
+  projectGhidraDoctorInspection,
+} from "./GhidraDoctor.js";
 
 let inspectionResources = createInspectionResources();
 afterEach(async () => {
@@ -395,5 +399,71 @@ describe("Windows native doctor failure diagnostics", () => {
         remediation: expect.any(String),
       }),
     );
+  });
+});
+
+describe("Ghidra doctor backend check", () => {
+  const available = {
+    available: true,
+    version: "3.0.2",
+    pythonPath: "/usr/bin/python3",
+  } as const;
+  const unavailable = {
+    available: false,
+    reason: "pyGhidra not available via python3: No module named pyghidra",
+  } as const;
+
+  it("reports the pyGhidra backend and its version when selected", () => {
+    expect(projectGhidraBackendCheck("auto", available, "linux")).toMatchObject(
+      { name: "backend", ok: true, detail: expect.stringContaining("3.0.2") },
+    );
+  });
+
+  it("reports the fallback reason when auto falls back to Java", () => {
+    expect(
+      projectGhidraBackendCheck("auto", unavailable, "linux"),
+    ).toMatchObject({
+      ok: true,
+      detail: expect.stringContaining("No module named pyghidra"),
+    });
+  });
+
+  it("fails when pyGhidra is forced but unavailable", () => {
+    expect(
+      projectGhidraBackendCheck("pyghidra", unavailable, "linux"),
+    ).toMatchObject({
+      ok: false,
+      code: "runtime_unavailable",
+      classification: "runtime_failure",
+      detail: expect.stringContaining("No module named pyghidra"),
+    });
+  });
+
+  it("reports Windows as Java even when pyGhidra is forced", () => {
+    expect(
+      projectGhidraBackendCheck("pyghidra", available, "win32"),
+    ).toMatchObject({
+      ok: true,
+      detail: expect.stringContaining("Windows excluded"),
+    });
+  });
+
+  it("fails a forced pyGhidra backend when no Ghidra installation exists", async () => {
+    const result = await inspectSystemGhidraProvider(
+      { REA_GHIDRA_BACKEND: "pyghidra" },
+      inspectionResources.owner,
+    );
+    expect(result.checks.find(({ name }) => name === "backend")).toMatchObject({
+      ok: false,
+      detail: expect.stringContaining("no usable Ghidra installation"),
+    });
+  });
+
+  it("omits the backend check when REA configuration is invalid", async () => {
+    const result = await inspectSystemGhidraProvider(
+      { REA_GHIDRA_BACKEND: "bogus" },
+      inspectionResources.owner,
+    );
+    expect(result.checks.some(({ name }) => name === "backend")).toBe(false);
   });
 });
