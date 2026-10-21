@@ -50,7 +50,10 @@ import {
   type GhidraInstallationHost,
   type GhidraInstallationInspection,
 } from "./GhidraInstallation.js";
-import { resolveGhidraAnalysisProfile } from "./GhidraAnalysisProfile.js";
+import {
+  JAVA_BACKEND,
+  resolveGhidraAnalysisProfile,
+} from "./GhidraAnalysisProfile.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { resolveGhidraAnalysisSeeds } from "./GhidraAnalysisSeeds.js";
 import {
@@ -391,6 +394,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       options?.signal,
       this.config.ghidraLanguageOverride,
       this.config.ghidraDisabledAnalyzers,
+      JAVA_BACKEND,
     );
     if (!resolved.ok || resolved.value.profile === null) return resolved;
     const override = this.config.ghidraLanguageOverride;

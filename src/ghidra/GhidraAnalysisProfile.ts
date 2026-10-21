@@ -4,6 +4,7 @@ import type {
   ProviderIdentity,
 } from "../application/AnalysisProvider.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
@@ -47,6 +48,44 @@ const functionBoundaryObservations = "ghidra-function-boundary-limitations-v4";
 const instructionReferenceCoverage =
   "exact-address-incoming-without-synthetic-entry-v2";
 
+/** Which process hosts the Ghidra analysis bridge. */
+export type GhidraBackendKind = "java" | "pyghidra";
+
+/** Backend committed into the analysis profile; `version` is the pyGhidra version when known. */
+export type GhidraBackendIdentity = {
+  readonly kind: GhidraBackendKind;
+  readonly version?: string;
+};
+
+export const JAVA_BACKEND: GhidraBackendIdentity = { kind: "java" };
+
+/**
+ * Launch and backend commitments. The Java backend adds no backend field so its
+ * existing profile digests are unchanged; pyGhidra commits its kind and version.
+ */
+const ghidraBackendProfileParameters = (
+  backend: GhidraBackendIdentity,
+  platform: GhidraInstallationInspection["platform"],
+): Readonly<Record<string, JsonValue>> => {
+  if (backend.kind === "java")
+    return {
+      process_launch:
+        platform === "win32"
+          ? "official-headless-script-v1"
+          : "inspected-jvm-launch-support-v1",
+    };
+  return {
+    process_launch:
+      platform === "win32"
+        ? "official-headless-script-v1"
+        : "pyghidra-cpython-jpype-v1",
+    analysis_backend: {
+      kind: backend.kind,
+      ...(backend.version === undefined ? {} : { version: backend.version }),
+    },
+  };
+};
+
 /**
  * The processor language REA pins for this target, or undefined when Ghidra may
  * select from the header. The committed profile and the session readback both
@@ -68,6 +107,7 @@ export const resolveGhidraAnalysisProfile = async (
   signal?: AbortSignal,
   languageOverride?: GhidraLanguageOverride,
   disabledAnalyzers?: readonly string[],
+  backend: GhidraBackendIdentity = JAVA_BACKEND,
 ): Promise<Result<AnalysisProfileResolution, AnalysisError>> => {
   if (signal?.aborted === true)
     return Promise.resolve(
@@ -104,6 +144,10 @@ export const resolveGhidraAnalysisProfile = async (
     : null;
   if (pspExtension !== null && !pspExtension.ok) return pspExtension;
   const provider = { ...identity, version: installation.providerVersion };
+  const backendProfileParameters = ghidraBackendProfileParameters(
+    backend,
+    installation.platform,
+  );
   const analyzerParameters =
     disabledAnalyzers === undefined || disabledAnalyzers.length === 0
       ? { analyzer_preset: "ghidra-default" }
@@ -149,10 +193,7 @@ export const resolveGhidraAnalysisProfile = async (
             installation.platform === "win32"
               ? "disabled-windows-p0"
               : "returning-imports-decoded-return-v2",
-          process_launch:
-            installation.platform === "win32"
-              ? "official-headless-script-v1"
-              : "inspected-jvm-launch-support-v1",
+          ...backendProfileParameters,
           load_image_evidence: "independent-raw-mapping-context-v4",
           jump_table_evidence: "typed-case-default-blocks-v1",
           decompiler_jump_loads: true,
@@ -259,10 +300,7 @@ export const resolveGhidraAnalysisProfile = async (
           installation.platform === "win32"
             ? "disabled-windows-p0"
             : "returning-imports-decoded-return-v2",
-        process_launch:
-          installation.platform === "win32"
-            ? "official-headless-script-v1"
-            : "inspected-jvm-launch-support-v1",
+        ...backendProfileParameters,
         ...(dos
           ? {
               load_image_evidence: dosCom
