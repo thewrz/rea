@@ -123,6 +123,21 @@ it("rejects handshake with unknown capability", () => {
   const result = parseGhidraSessionInfo(sessionInfo, validExpected());
   expect(result.ok).toBe(false);
 });
+
+it("accepts read-only handshake without mutation capabilities", () => {
+  const readOnlyCapabilities = GHIDRA_SESSION_BASELINE_CAPABILITIES.filter(
+    (cap) => !GHIDRA_MUTATING_OPERATIONS.has(cap),
+  );
+  const sessionInfo = createValidSessionInfo({
+    capabilities: readOnlyCapabilities,
+    read_only: true,
+  });
+  const result = parseGhidraSessionInfo(sessionInfo, {
+    ...validExpected(),
+    expectedReadOnly: true,
+  });
+  expect(result.ok).toBe(true);
+});
 ```
 
 - [ ] **Step 5: Run tests to verify failures**
@@ -143,7 +158,23 @@ export const GHIDRA_ALL_KNOWN_CAPABILITIES: ReadonlySet<string> = new Set([
 ]);
 ```
 3. Update `capabilitySchema` to accept all known capabilities.
-4. Update `parseGhidraSessionInfo` validation: require all baseline capabilities present, permit only known capabilities, reject duplicates. Replace the existing exact-length + exact-membership check.
+4. Update `parseGhidraSessionInfo` validation: require all baseline capabilities present (accounting for read-only mode), permit only known capabilities, reject duplicates. Replace the existing exact-length + exact-membership check. The required set must exclude mutation capabilities when `expectedReadOnly` is true:
+```typescript
+const requiredBaseline = readOnly
+  ? GHIDRA_SESSION_BASELINE_CAPABILITIES.filter(
+      (cap) => !GHIDRA_MUTATING_OPERATIONS.has(cap),
+    )
+  : [...GHIDRA_SESSION_BASELINE_CAPABILITIES];
+const hasAllRequired = requiredBaseline.every((cap) =>
+  parsed.data.capabilities.includes(cap),
+);
+const allKnown = parsed.data.capabilities.every((cap) =>
+  GHIDRA_ALL_KNOWN_CAPABILITIES.has(cap),
+);
+const noDuplicates =
+  new Set(parsed.data.capabilities).size === parsed.data.capabilities.length;
+```
+This preserves the existing Windows test at `GhidraSessionValues.test.ts:156` which verifies read-only acceptance without mutations.
 
 - [ ] **Step 7: Run all tests**
 
@@ -153,7 +184,8 @@ Expected: All PASS — both old and new tests.
 - [ ] **Step 8: Run the broader Ghidra test suite for regressions**
 
 Run: `npx vitest run src/ghidra/ --reporter=verbose`
-Expected: All existing tests PASS. The Java bridge handshake still works because baseline capabilities are unchanged.
+Run: `npm run test:focused -- tests/boundary/providers/ghidra/`
+Expected: All existing tests PASS including boundary launcher/client tests. The Java bridge handshake still works because baseline capabilities are unchanged.
 
 - [ ] **Step 9: Commit**
 
@@ -168,12 +200,12 @@ git commit -m "feat(ghidra): relax session handshake for pyGhidra bridge name an
 
 **Files:**
 - Modify: `src/ghidra/GhidraAnalysisProfile.ts`
-- Modify: `src/ghidra/GhidraProviderClient.ts` (pass backend kind to profile resolution)
+- Modify: `src/ghidra/GhidraProvider.ts` (thread backend kind to `resolveGhidraAnalysisProfile` call at ~line 386)
 - Test: existing `GhidraAnalysisProfile` tests (if any), or add inline
 
 **Interfaces:**
-- Consumes: `resolveGhidraAnalysisProfile` function, `createAnalysisProfile` from `src/domain/analysisProfile.ts`
-- Produces: `process_launch` profile field now distinguishes `"pyghidra-cpython-jpype-v1"` from `"inspected-jvm-launch-support-v1"` / `"official-headless-script-v1"`, causing different profile digests per backend
+- Consumes: `resolveGhidraAnalysisProfile` function (called from `GhidraProvider.ts:386`, NOT `GhidraProviderClient.ts`), `createAnalysisProfile` from `src/domain/analysisProfile.ts`
+- Produces: `process_launch` profile field now distinguishes `"pyghidra-cpython-jpype-v1"` from `"inspected-jvm-launch-support-v1"` / `"official-headless-script-v1"`, causing different profile digests per backend. Backend version (pyGhidra version string) is included in the profile commitment alongside backend kind.
 
 - [ ] **Step 1: Identify current `process_launch` values**
 
@@ -181,15 +213,19 @@ Read `src/ghidra/GhidraAnalysisProfile.ts` to find all places `process_launch` i
 - `"inspected-jvm-launch-support-v1"` for POSIX
 - `"official-headless-script-v1"` for Windows
 
-- [ ] **Step 2: Add backend kind parameter**
+The caller is `GhidraProvider.ts` at ~line 386 (`resolveGhidraAnalysisProfile(target, GHIDRA_PROVIDER_IDENTITY, installation, ...)`).
 
-The `resolveGhidraAnalysisProfile` function (or its caller) needs to know whether pyGhidra or Java is selected. Add an optional `backend` parameter:
+- [ ] **Step 2: Add backend kind and version parameters**
 
 ```typescript
 type GhidraBackendKind = "java" | "pyghidra";
+type GhidraBackendIdentity = {
+  readonly kind: GhidraBackendKind;
+  readonly version?: string; // pyGhidra version string, e.g. "3.1.0"
+};
 ```
 
-Thread this through from the provider to the profile resolver. When `backend === "pyghidra"` and platform is not `"win32"`, use `"pyghidra-cpython-jpype-v1"` as the `process_launch` value.
+Thread `GhidraBackendIdentity` through `GhidraProvider.ts` to `resolveGhidraAnalysisProfile`. The provider owns this call, not the client. When `backend.kind === "pyghidra"` and platform is not `"win32"`, use `"pyghidra-cpython-jpype-v1"` as the `process_launch` value. Include the backend version in the profile commitment so digests distinguish pyGhidra version changes.
 
 - [ ] **Step 3: Verify profile digest changes**
 
@@ -217,7 +253,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/ghidra/GhidraAnalysisProfile.ts src/ghidra/GhidraProviderClient.ts
+git add src/ghidra/GhidraAnalysisProfile.ts src/ghidra/GhidraProvider.ts
 git commit -m "feat(ghidra): include backend identity in analysis profile for Evidence provenance"
 ```
 
@@ -296,39 +332,94 @@ export type PyGhidraAvailability =
 
 export const inspectPyGhidraAvailability = async (
   pythonPath: string,
+  ghidraInstallDir: string,
   signal?: AbortSignal,
 ): Promise<PyGhidraAvailability> => {
+  signal?.throwIfAborted();
   try {
-    const { stdout } = await execFileOutput(pythonPath, [
+    // Phase 1: verify pyghidra is importable and get version
+    const { stdout: versionOut } = await execFileOutput(pythonPath, [
       "-c",
       "import pyghidra; print(pyghidra.__version__)",
     ], { signal, timeout: 10_000 });
-    const version = stdout.trim();
+    const version = versionOut.trim();
     if (!version) return { available: false, reason: "pyGhidra reported empty version" };
+
+    // Phase 2: verify JVM startup against the selected Ghidra installation
+    signal?.throwIfAborted();
+    await execFileOutput(pythonPath, [
+      "-c",
+      "import pyghidra; pyghidra.start()",
+    ], {
+      signal,
+      timeout: 60_000,
+      env: { GHIDRA_INSTALL_DIR: ghidraInstallDir },
+    });
+
     return { available: true, version, pythonPath };
-  } catch {
-    return { available: false, reason: `pyGhidra not available via ${pythonPath}` };
+  } catch (error) {
+    if (signal?.aborted) throw signal.reason;
+    return { available: false, reason: `pyGhidra not available via ${pythonPath}: ${error instanceof Error ? error.message : String(error)}` };
   }
 };
 ```
 
-Use `execFileOutput` from `src/process/ExecFileOutput.ts` (already used in this file for Java probes).
+Key differences from the naive version-only probe:
+- Passes `GHIDRA_INSTALL_DIR` environment to the probe, matching the actual launch env
+- Verifies JVM startup (not just importability) — catches JPype/JDK mismatches early
+- Preserves cancellation as cancellation (rethrows `signal.reason`) instead of caching as unavailability
+- Uses the same `execFileOutput` from `src/process/ExecFileOutput.ts` used for Java probes
+- Cache the result per provider instance lifetime (aligns with existing scope-bound/shared inspection lifecycle in `GhidraProvider.ts:527`)
 
-- [ ] **Step 5: Add doctor diagnostics**
+- [ ] **Step 5: Extract shared backend selection logic**
 
-In `src/ghidra/GhidraDoctor.ts`, extend `inspectSystemGhidraProvider` to call `inspectPyGhidraAvailability` and report the result as an additional diagnostic entry.
+Create a pure function used by both `GhidraDoctor` and `GhidraProvider`:
 
-- [ ] **Step 6: Run tests**
+```typescript
+export type GhidraBackendSelection =
+  | { readonly selected: "java"; readonly reason: string }
+  | { readonly selected: "pyghidra"; readonly pyghidraVersion: string };
+
+export const resolveGhidraBackend = (
+  config: { readonly ghidraBackend: "auto" | "java" | "pyghidra" },
+  pyghidraAvailability: PyGhidraAvailability,
+  platform: NodeJS.Platform,
+): GhidraBackendSelection => {
+  if (platform === "win32")
+    return { selected: "java", reason: "Windows excluded in Phase 1" };
+  if (config.ghidraBackend === "java")
+    return { selected: "java", reason: "REA_GHIDRA_BACKEND=java" };
+  if (config.ghidraBackend === "pyghidra") {
+    if (!pyghidraAvailability.available)
+      throw new Error(`pyGhidra backend required but unavailable: ${pyghidraAvailability.reason}`);
+    return { selected: "pyghidra", pyghidraVersion: pyghidraAvailability.version };
+  }
+  // auto
+  if (pyghidraAvailability.available)
+    return { selected: "pyghidra", pyghidraVersion: pyghidraAvailability.version };
+  return { selected: "java", reason: pyghidraAvailability.reason };
+};
+```
+
+- [ ] **Step 6: Add doctor diagnostics**
+
+In `src/ghidra/GhidraDoctor.ts`, extend `inspectSystemGhidraProvider` to:
+1. Call `inspectPyGhidraAvailability` with the installation's dir
+2. Call `resolveGhidraBackend` to determine the selected backend
+3. Report the result: selected backend, pyGhidra version if available, fallback reason if not
+4. Add tests for: forced-backend failure, Windows exclusion, auto-fallback reporting
+
+- [ ] **Step 7: Run tests**
 
 Run: `npx vitest run src/ghidra/GhidraInstallation.test.ts --reporter=verbose`
 Expected: PASS.
 
-- [ ] **Step 7: Run typecheck**
+- [ ] **Step 8: Run typecheck**
 
 Run: `npx turbo run typecheck`
 Expected: PASS — new config fields are properly threaded.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add src/ghidra/GhidraInstallation.ts src/ghidra/GhidraDoctor.ts \
@@ -357,8 +448,10 @@ git commit -m "feat(ghidra): add pyGhidra availability inspection and backend co
 - [ ] **Step 1: Create `requirements.txt`**
 
 ```
-pyghidra>=1.3.0
+pyghidra>=3.1.0
 ```
+
+Version 3.1.0 is bundled with Ghidra 12.1.4 (the version REA verifies at `GhidraReleasePolicy.ts:2`). The revised API (`start()`, project-based import) arrived in pyGhidra 3.0; earlier versions lack required APIs. The pyGhidra version must be from the same Ghidra release line as the installation.
 
 - [ ] **Step 2: Create `bridge/pyghidra/__main__.py`**
 
@@ -385,7 +478,7 @@ def main():
         descriptor = json.load(f)
 
     from rea_pyghidra_bridge import run_bridge
-    run_bridge(descriptor, target_path)
+    run_bridge(descriptor, descriptor_path, target_path)
 
 if __name__ == "__main__":
     main()
@@ -401,13 +494,22 @@ This is the main bridge file. It handles:
 5. Shutdown and cleanup
 
 Key implementation details:
-- Read the descriptor for transport, endpoint_path, token, run_id, target_sha256, provider_version, profile_digest
+- `run_bridge(descriptor, descriptor_path, target_path)` — receives all three from `__main__.py`
+- Derive runtime root from `descriptor_path`: `os.path.dirname(descriptor_path)`
+- Read the descriptor for transport, endpoint_path, token, run_id, target_sha256, provider_version, profile_digest, plus analysis config fields (see below)
 - Start pyGhidra via `pyghidra.start()`, then import `ghidra` packages
-- Create an ephemeral project inside the runtime root (derive from descriptor path: `os.path.dirname(descriptor_path)`)
+- Create an ephemeral project inside the runtime root
 - Import the target binary with language/compiler spec from descriptor if present
-- Run auto-analysis
+- **Apply analysis configuration for parity with Java launcher** (see `GhidraLauncher.ts:826`):
+  1. Language/compiler-spec selection from descriptor `language_id`/`compiler_spec_id`
+  2. Disabled analyzers from descriptor `disabled_analyzers` — apply via `AutoAnalysisManager` API
+  3. Analysis seeds from descriptor `seed_paths` — apply seed data to program before analysis
+  4. No-return fix extension from descriptor `analysis_extensions` — apply if present
+  5. MIPS soft-float processing from descriptor `mips_soft_float` — apply if present
+- Run Ghidra auto-analysis via `pyghidra.analyze()`
+- **Verify imported binary identity**: after import, check `program.getExecutableSHA256()` matches `descriptor["target_sha256"]`. Fail with a clear error on mismatch — echoing an expected digest is not import attestation.
 - Bind socket to `endpoint_path`
-- Accept one connection
+- **Authentication (Unix)**: accept one connection (matching Java's Unix path at `ReaGhidraBridge.java:360`). Validate token on each request. On wrong token, return an error response but do not disconnect (the connection is already established). Add wrong-token and silent-peer (no data sent) tests.
 - Request loop: parse JSON line, verify token, dispatch method, write JSON response line
 - `ping` returns session info matching `sessionInfoSchema`
 - `shutdown` closes program, deletes project directory, responds, exits
@@ -434,17 +536,18 @@ The `ping` response must produce:
 }
 ```
 
-Address formatting helper:
+Address formatting helper — capture the program's default address space at bridge startup (matching `ReaGhidraBridge.java:203`), then compare with `space.equals()` (matching `ReaGhidraBridge.java:4510`). Do NOT call `isDefaultSpace()` (does not exist in Ghidra's AddressSpace API) or use the `"ram"` heuristic:
+
 ```python
-def format_address(addr):
+# At bridge startup, after importing the program:
+session_default_space = program.getAddressFactory().getDefaultAddressSpace()
+
+def format_address(addr, session_default_space):
     """Format a Ghidra Address to canonical REA wire format."""
     space = addr.getAddressSpace()
-    default_space = addr.getAddressSpace().getSpaceID() == \
-        addr.getAddressSpace().getPhysicalSpace().getSpaceID()
     offset_hex = format(addr.getOffset() & 0xFFFFFFFFFFFFFFFF, 'x')
-    if space.isDefaultSpace() or space.getName() == "ram":
+    if space.equals(session_default_space):
         return f"0x{offset_hex}"
-    # Nondefault space: encode space name
     from urllib.parse import quote
     encoded_space = quote(space.getName(), safe="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._~-")
     return f"{encoded_space}:0x{offset_hex}"
@@ -454,16 +557,20 @@ def format_address(addr):
 
 Implement each inventory operation as a function that receives `(program, flat_api, params)` and returns a JSON-serializable dict. The return shapes must match what the Java bridge produces (validated by the TS Zod schemas).
 
-Key operations and their return shapes (from `GhidraInventoryValues.ts`):
+Key operations and their **exact** return shapes (from actual Zod schemas — the Python bridge MUST match these or validation fails):
 
-- `list_procedures`: return `[{"address": str, "value": str, "procedure": {"external": bool, "thunk": bool, "thunk_target": str|null}}, ...]`
-- `list_segments`: return `[{"name": str, "start": str, "end": str, "length": int, "read": bool, "write": bool, "execute": bool, "volatile": bool, "initialized": bool}, ...]`
-- `list_strings`: return `[{"address": str, "value": str, "length": int}, ...]`
-- `read_bytes`: return `{"address": str, "bytes": str}` (hex-encoded)
-- `search_bytes`: return `[{"address": str}, ...]`
-- `set_address_name` / `set_addresses_names`: wrap in `transaction()`, apply name, readback
+- `list_procedures`: `[{"address": str, "value": str, "procedure": {"external": bool, "thunk": bool, "thunk_target": str|null}}, ...]` (from `GhidraInventoryValues.ts:procedureItem`)
+- `list_segments`: `[{"name": str, "start": str, "end": str, "readable": bool, "writable": bool, "executable": bool, "permissions": {"available": true, "source": "ghidra-memory-block"}, "provenance": "ghidra-memory-block", "address_space": str, "image_base": str, "initialized": bool, "overlay": bool, "sections": [<nested memoryRegion array>]}, ...]` (from `GhidraInventoryValues.ts:segment` — note: `readable`/`writable`/`executable` not `read`/`write`/`execute`; includes `permissions`, `provenance`, `address_space`, `image_base`, `overlay`, `sections`)
+- `list_strings`: `[{"address": str, "value": str, "string": {"encoding": str, "termination": "missing"|"present_or_not_required", "byte_length": int}}, ...]` (from `GhidraInventoryValues.ts:stringItem` — note: nested `string` facts, NOT flat `length`)
+- `read_bytes`: `{"address": str, "requested_bytes": int, "returned_bytes": int, "bytes_hex": str, "complete": bool}` (from `nativeByteRead.ts:nativeByteReadSchema` — invariant: `returned_bytes * 2 === bytes_hex.length`, `complete === (returned_bytes === requested_bytes)`)
+- `search_bytes`: `{"matches": [{"address": str, "segment": {"address": str, "name": str}|null, "procedure": {"address": str, "name": str}|null}, ...], "searched": {"blocks": [...], "bytes": int, "skipped_uninitialized": [...], "skipped_not_loaded": [...]}, "complete": bool, "next_cursor": str|null}` (from `bytePattern.ts` — invariant: `complete === (next_cursor === null)`, `searched.bytes === sum(blocks[*].bytes)`)
+- `set_address_name` / `set_addresses_names`: see Transaction Semantics below
 
-Study `ReaGhidraBridge.java` for the exact response structure of each operation — the Python implementation must match.
+**Transaction semantics** (matching Java's behavior at `ReaGhidraBridge.java:1933`):
+- `set_address_name`: open transaction, apply name, **readback the applied name before committing** — on mismatch, roll back. pyGhidra's `transaction()` auto-commits on normal exit, so the handler must explicitly check readback and `raise` to trigger rollback.
+- `set_addresses_names`: use **per-address independent transactions** (matching Java's behavior at `ReaGhidraBridge.java:1952`). Handle alias conflicts. Preserve per-address partial success semantics — one failure does not roll back others.
+
+Study `ReaGhidraBridge.java` dispatch at line 440+ for the exact response structure of each operation — the Python implementation must match.
 
 - [ ] **Step 5: Write Python unit test for protocol conformance**
 
@@ -545,9 +652,9 @@ In `package.json`, add to the `files` array after the existing `bridge/ghidra/` 
 "bridge/pyghidra/requirements.txt",
 ```
 
-Add to the `test:python` script:
+Add to the `test:python` script — run the pyGhidra tests unconditionally (the `@unittest.skipUnless` decorator inside the tests handles gating; the `|| true` shell pattern silently swallows real failures):
 ```
-&& ([ "$REA_TEST_PYGHIDRA" = "1" ] && python3 -m unittest bridge/pyghidra/test_bridge_protocol.py -v || true)
+&& python3 -m unittest bridge/pyghidra/test_bridge_protocol.py -v
 ```
 
 - [ ] **Step 7: Commit**
@@ -574,15 +681,31 @@ git commit -m "feat(ghidra): add pyGhidra bridge with protocol handler and inven
 
 Each function operation handler receives `(program, decompiler, flat_api, params)` and returns a JSON-serializable result.
 
-Critical operations and their shapes (from `GhidraFunctionValues.ts`):
+**Observation envelopes**: Eight function operations (`analyze_function`, `procedure_assembly`, `procedure_callees`, `procedure_callers`, `procedure_info`, `procedure_pseudo_code`, `read_function_instructions`, `procedure_references`) are validated through `functionBoundaryObservationOperations` in `GhidraFunctionValues.ts:412`. These operations MUST return an observation envelope, not a raw value:
 
-- `procedure_pseudo_code`: Set up `DecompInterface`, decompile the function at the given address, return the C-like string or null. The Java bridge returns the decompiled function's C code as a string.
-- `analyze_function`: Return a function dossier matching `functionDossierSchema` — name, entry address, body ranges, signature, calling convention, local variables.
-- `procedure_callees` / `procedure_callers`: Return arrays of `{address, name}` for called/calling functions.
-- `xrefs`: Return cross-references to/from an address.
-- `annotate_native_function`: Wrap in `transaction()`, apply name and/or comment changes, readback and return the updated function dossier. This is a mutation — must match the Java bridge's readback behavior.
+```python
+{
+    "value": <inner operation result>,
+    "limitations": [<string array, may be empty>],
+    # Optional fields (only on specific operations):
+    # "cache_policy": "live"  — only on analyze_function
+    # "relationship_coverage": {...}  — only on analyze_function, procedure_callers, procedure_callees
+    # "selection": {"file_offset": int, "mapped_address": str, "procedure_address": str}  — only on procedure_pseudo_code
+}
+```
 
-Study `ReaGhidraBridge.java` method implementations for exact return shapes. The Java bridge's `handleAnalyzeFunction`, `handleProcedurePseudoCode`, `handleXrefs`, etc. are the authoritative reference.
+The TS client (`parseGhidraFunctionResult` at `GhidraFunctionValues.ts:461`) rejects responses without `{value, limitations}` before validating the inner value. This is NOT optional.
+
+**Inner payload shapes** (from actual Zod schemas):
+
+- `procedure_pseudo_code`: inner `value` is `string | null`. The Java dispatch name is `procedurePseudocode` (at `ReaGhidraBridge.java:447`).
+- `analyze_function`: inner `value` is a function dossier matching `functionDossierSchema` — name, entry address, body ranges, signature, calling convention, local variables. Java dispatch: `analyzeFunctionObservation`.
+- `procedure_callees` / `procedure_callers`: inner `value` is `string[]` — an array of canonical address strings (NOT `{address, name}` objects). Schema: `z.array(ghidraCanonicalAddressSchema)`.
+- `xrefs`: returns `string[]` (canonical addresses). Java dispatch: `xrefs` at `ReaGhidraBridge.java:1401`. NOT wrapped in an observation envelope (not in `functionBoundaryObservationOperations`).
+- `annotate_native_function`: returns `{annotations: {address: str, name: str, comment: str|null, inline_comment: str|null}, dossier: <functionDossierSchema>, effects: {scope: "session-analysis-database", source_bytes_modified: false, persists_after_close: false}}` (from `nativeFunctionAnnotationsSchema`). NOT wrapped in an observation envelope. Mutation — must invalidate decompiler cache before refreshed readback (matching `ReaGhidraBridge.java:1462`). Check readback matches applied annotations; raise to trigger rollback on mismatch.
+- `inspect_native_data_type`, `inspect_native_instruction`, `resolve_native_call_targets`: NOT in `functionBoundaryObservationOperations` — return raw values, no envelope.
+
+Study `ReaGhidraBridge.java` dispatch at line 440+ for exact implementations.
 
 - [ ] **Step 2: Register function operations in the bridge dispatch**
 
@@ -597,11 +720,24 @@ Add tests in `test_bridge_protocol.py` for `procedure_pseudo_code`, `analyze_fun
 Run: `REA_TEST_PYGHIDRA=1 python3 -m unittest bridge/pyghidra/test_bridge_protocol.py -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Add `functions.py` to `package.json` `files` array**
+
+Task 4 added inventory files but not function files. Add:
+```json
+"bridge/pyghidra/operations/functions.py",
+```
+
+Verify all bridge files are included in the package:
+```bash
+npm pack --dry-run 2>&1 | grep pyghidra
+```
+Expected: all `.py` files under `bridge/pyghidra/` are listed.
+
+- [ ] **Step 6: Commit**
 
 ```bash
 git add bridge/pyghidra/operations/functions.py bridge/pyghidra/rea_pyghidra_bridge.py \
-  bridge/pyghidra/test_bridge_protocol.py
+  bridge/pyghidra/test_bridge_protocol.py package.json
 git commit -m "feat(ghidra): add function operations to pyGhidra bridge"
 ```
 
@@ -612,9 +748,10 @@ git commit -m "feat(ghidra): add function operations to pyGhidra bridge"
 **Files:**
 - Create: `src/ghidra/GhidraPyGhidraLauncher.ts`
 - Create: `src/ghidra/GhidraPyGhidraLauncher.test.ts`
+- Modify: `src/ghidra/GhidraLauncher.ts` (export `ghidraRuntimePaths` — currently module-private at line 868)
 
 **Interfaces:**
-- Consumes: `GhidraLauncher` interface (from `GhidraLauncher.ts`), `GhidraLaunchSession`, `GhidraLaunch`, `GhidraLaunchError`, `spawnOwnedProviderProcess` (from `src/process/ProviderProcess.ts`), `ghidraRuntimePaths` (internal to `GhidraLauncher.ts` — either export it or duplicate the paths), `PyGhidraAvailability` (from Task 3)
+- Consumes: `GhidraLauncher` interface (from `GhidraLauncher.ts`), `GhidraLaunchSession`, `GhidraLaunch`, `GhidraLaunchError`, `GhidraLaunchRollbackFailure`, `spawnOwnedProviderProcess` (from `src/process/ProviderProcess.ts` — takes an `OwnedProviderProcessSpawnOptions` object, returns `Promise<SpawnedOwnedProviderProcess>`), `ghidraRuntimePaths` (must be exported from `GhidraLauncher.ts`), `PyGhidraAvailability` (from Task 3), `GhidraLanguageOverride` (from `src/config/ghidraLanguageOverride.ts` — `compilerSpecId` is optional)
 - Produces: `GhidraPyGhidraLauncher` class implementing `GhidraLauncher`, `GhidraPyGhidraLauncherOptions` type
 
 - [ ] **Step 1: Write failing test for launcher construction**
@@ -641,17 +778,32 @@ describe("GhidraPyGhidraLauncher", () => {
 Run: `npx vitest run src/ghidra/GhidraPyGhidraLauncher.test.ts --reporter=verbose`
 Expected: FAIL — module does not exist.
 
-- [ ] **Step 3: Implement `GhidraPyGhidraLauncher`**
+- [ ] **Step 3: Export `ghidraRuntimePaths`**
+
+In `src/ghidra/GhidraLauncher.ts`, export `ghidraRuntimePaths` (currently `const` at line 868). The pyGhidra launcher needs the same directory layout.
+
+- [ ] **Step 4: Implement `GhidraPyGhidraLauncher`**
+
+Key implementation constraints (from codebase verification):
+
+1. **`spawnOwnedProviderProcess` takes an options object** (`OwnedProviderProcessSpawnOptions`), not positional args. It returns `Promise<SpawnedOwnedProviderProcess>` and must be awaited.
+2. **`ghidraRuntimePaths` is module-private** in `GhidraLauncher.ts` — must be exported (Step 3).
+3. **`mkdir` from `node:fs/promises`** must be imported.
+4. **`GhidraLanguageOverride`** (from `src/config/ghidraLanguageOverride.ts`) has `compilerSpecId` optional — use this type instead of a custom object.
+5. **tsconfig has `exactOptionalPropertyTypes`** — never assign `undefined` to optional properties. Omit them instead.
+6. **`GhidraLaunchError.partialLaunch`** must be a full `GhidraLaunch`, not just `{ projectRoot }`.
+7. **Environment isolation** must match the Java launcher (`GhidraLauncher.ts:937`): isolate HOME, TMPDIR to runtime paths, pass inspected JDK through env, prevent ambient env leakage.
+8. **Descriptor must include analysis config fields** for parity: `seed_paths`, `analysis_extensions`, `mips_soft_float`, `disabled_analyzers`, `language_id`, `compiler_spec_id`.
 
 ```typescript
 import type { GhidraLauncher, GhidraLaunch, GhidraLaunchSession } from "./GhidraLauncher.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { GhidraLaunchError, ghidraRuntimePaths } from "./GhidraLauncher.js";
+import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
 import type { Result } from "../domain/result.js";
 import { err, ok } from "../domain/result.js";
-import { GhidraLaunchError } from "./GhidraLauncher.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { spawnOwnedProviderProcess } from "../process/ProviderProcess.js";
-import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
+import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import writeFileAtomic from "write-file-atomic";
 
@@ -659,91 +811,35 @@ export interface GhidraPyGhidraLauncherOptions {
   readonly pythonPath: string;
   readonly bridgeScriptPath: string;
   readonly ghidraInstallDir: string;
+  readonly javaHome?: string;
   readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly platform?: NodeJS.Platform;
-  readonly languageOverride?: { readonly languageId: string; readonly compilerSpecId: string };
+  readonly languageOverride?: GhidraLanguageOverride;
   readonly disabledAnalyzers?: readonly string[];
+  readonly analysisSeeds?: readonly string[];
+  readonly analysisExtensions?: readonly string[];
+  readonly mipsSoftFloat?: boolean;
   readonly spawnProcess?: typeof spawnOwnedProviderProcess;
-}
-
-export class GhidraPyGhidraLauncher implements GhidraLauncher {
-  readonly #options: GhidraPyGhidraLauncherOptions;
-
-  constructor(options: GhidraPyGhidraLauncherOptions) {
-    this.#options = {
-      ...options,
-      environment: snapshotEnvironment(options.environment, options.platform),
-    };
-  }
-
-  async launch(
-    session: GhidraLaunchSession,
-    options: {
-      readonly signal?: AbortSignal;
-      readonly resourceScope?: ArtifactResourceScope;
-    } = {},
-  ): Promise<Result<GhidraLaunch, GhidraLaunchError | AnalysisCancelledError>> {
-    if (options.signal?.aborted)
-      return err(new AnalysisCancelledError("pyGhidra launch cancelled"));
-
-    const paths = ghidraRuntimePaths(session.runtimeRoot);
-    await mkdir(paths.projectRoot, { recursive: true });
-
-    const descriptor = {
-      transport: session.transport,
-      endpoint_path: session.endpointPath,
-      token: session.token,
-      run_id: session.runId,
-      target_sha256: session.targetSha256,
-      provider_version: session.providerVersion,
-      profile_digest: session.profileDigest,
-      ...(this.#options.languageOverride && {
-        language_id: this.#options.languageOverride.languageId,
-        compiler_spec_id: this.#options.languageOverride.compilerSpecId,
-      }),
-      ...(this.#options.disabledAnalyzers?.length && {
-        disabled_analyzers: this.#options.disabledAnalyzers,
-      }),
-    };
-    await writeFileAtomic(paths.descriptorPath, JSON.stringify(descriptor));
-
-    const spawn = this.#options.spawnProcess ?? spawnOwnedProviderProcess;
-    try {
-      const process = spawn(
-        this.#options.pythonPath,
-        [this.#options.bridgeScriptPath, paths.descriptorPath, session.targetPath],
-        {
-          env: { ...this.#options.environment, GHIDRA_INSTALL_DIR: this.#options.ghidraInstallDir },
-          signal: options.signal,
-        },
-      );
-      await writeFileAtomic(paths.ownershipPath, session.runId);
-      return ok({
-        process,
-        projectRoot: paths.projectRoot,
-        ghidraLogPath: paths.ghidraLogPath,
-        scriptLogPath: paths.scriptLogPath,
-        configuredMaxHeap: undefined,
-        launchSupport: undefined,
-      });
-    } catch (cause) {
-      return err(new GhidraLaunchError(
-        `pyGhidra bridge failed to start: ${cause instanceof Error ? cause.message : String(cause)}`,
-        { partialLaunch: { projectRoot: paths.projectRoot } },
-      ));
-    }
-  }
 }
 ```
 
-The launcher follows the same structure as `GhidraHeadlessLauncher.launch()` but is simpler: no Java launch support probes, no headless argument construction, no script wrappers. The Python process receives the descriptor and target path as CLI arguments and handles everything internally.
+The `launch` method must:
+1. Check cancellation via `signal?.throwIfAborted()`
+2. Create runtime directories (reuse `ghidraRuntimePaths` + `mkdir`)
+3. Build an isolated environment matching `ghidraLaunchEnvironment` pattern: `HOME` → `paths.homeRoot`, `TMPDIR` → `paths.tempRoot`, `GHIDRA_INSTALL_DIR`, and inspected `JAVA_HOME` if provided. Do NOT spread `process.env` — use only the snapshotted `environment`.
+4. Write descriptor JSON including all analysis config fields (seeds, extensions, soft-float, disabled analyzers, language override)
+5. Spawn via `await spawnOwnedProviderProcess({ command: pythonPath, arguments: [bridgeScriptPath, descriptorPath, targetPath], env, runId: session.runId, signal })` — **object form, awaited**
+6. Write ownership manifest
+7. Construct `GhidraLaunch` (omit `configuredMaxHeap` and `launchSupport` — do NOT assign `undefined`)
+8. On post-spawn cancellation: attempt cleanup of spawned process, retain ownership through `GhidraLaunchError` with `partialLaunch` as a **full** `GhidraLaunch` (needs the process handle)
+9. On spawn failure: retain cleanup info via `GhidraLaunchError.rollbackFailure` for retry
+10. Set up log destinations at `paths.ghidraLogPath` and `paths.scriptLogPath` so `GhidraDiagnostics.ts:70` can report them
 
 Key differences from `GhidraHeadlessLauncher`:
 - Command: `[pythonPath, bridgeScriptPath, descriptorPath, targetPath]`
-- Environment: `{ ...snapshotEnvironment, GHIDRA_INSTALL_DIR: ghidraInstallDir }`
-- No JVM-specific logic (heap config, launch support stderr capture)
-- No PSP extension handling (Phase 1 scope)
-- Descriptor includes language/compiler overrides and disabled analyzers for the Python bridge to apply
+- No JVM launch support probes or headless argument construction
+- No PSP/DOS/COM/raw-binary import mode handling (routed to Java in Task 7)
+- Descriptor carries analysis config instead of CLI flags
 
 - [ ] **Step 4: Write lifecycle tests**
 
@@ -810,7 +906,7 @@ const launcher = backendKind === "pyghidra"
   : new GhidraHeadlessLauncher({ ... });
 ```
 
-- [ ] **Step 3: Modify `GhidraProvider.ts` — backend selection logic**
+- [ ] **Step 3: Modify `GhidraProvider.ts` — backend selection logic with target guard**
 
 In `GhidraProvider`, during `inspectAvailability` or construction:
 
@@ -819,25 +915,41 @@ In `GhidraProvider`, during `inspectAvailability` or construction:
 3. If `config.ghidraBackend === "auto"` → probe pyGhidra, use if available, else Java
 4. If `platform === "win32"` → always Java (Phase 1 scope)
 
+**Target compatibility guard** (`pyGhidraSupportsTarget`): The Java launcher handles PSP, DOS MZ, DOS COM, and raw-binary import modes via specialized loader/language/base selection (`GhidraLauncher.ts:755`, `GhidraProviderClient.ts:361`). The pyGhidra bridge does not implement these in Phase 1. Add a guard function that checks the analysis profile's loader/language requirements:
+- If the target requires PSP, DOS, COM, or raw-binary import mode → route to Java even under `auto`
+- Under forced `pyghidra` mode → return a clear error explaining the unsupported target type
+- The guard runs after profile resolution, before launcher construction
+
 Cache the probe result on the provider instance.
+
+**Injectable inspection seam**: The `pyGhidraAvailability` probe must be injectable (constructor parameter or factory option) so that:
+- Existing Java-specific tests (`GhidraProvider.behavior.test.ts:81`) can force Java backend without depending on the developer's Python installation
+- Tests at lines 231/240 that cast to `GhidraHeadlessLauncher` and read `.options.disabledAnalyzers` continue to work
+- Each selection outcome (forced java, forced pyghidra, auto-with-python, auto-without-python, auto-with-unsupported-target) can be tested independently
 
 - [ ] **Step 4: Thread config through `composition/binary.ts`**
 
 The `GhidraProvider` constructor already receives `config` and `environment`. Ensure the new `ghidraBackend` and `pyghidraPythonPath` fields reach the provider.
 
-- [ ] **Step 5: Write backend selection tests**
+- [ ] **Step 5: Write backend selection and target guard tests**
 
 ```typescript
 it("selects Java launcher when REA_GHIDRA_BACKEND=java", () => { ... });
 it("selects pyGhidra launcher when REA_GHIDRA_BACKEND=pyghidra and available", () => { ... });
 it("falls back to Java when REA_GHIDRA_BACKEND=auto and pyGhidra unavailable", () => { ... });
 it("always selects Java on Windows regardless of config", () => { ... });
+it("routes PSP target to Java under auto mode even when pyGhidra available", () => { ... });
+it("routes raw-binary target to Java under auto mode", () => { ... });
+it("returns error for unsupported target under forced pyghidra mode", () => { ... });
+it("existing Java-specific tests use injected unavailable pyGhidra", () => { ... });
 ```
 
-- [ ] **Step 6: Run full Ghidra test suite**
+Existing Java-specific fixtures (`GhidraProvider.behavior.test.ts`) must inject an `unavailable` pyGhidra probe to prevent auto-detection from changing their launcher type.
 
-Run: `npx vitest run src/ghidra/ --reporter=verbose`
-Expected: All PASS. Java bridge path unchanged.
+- [ ] **Step 6: Run full Ghidra test suite including boundary tests**
+
+Run: `npx vitest run src/ghidra/ tests/boundary/providers/ghidra/ --reporter=verbose`
+Expected: All PASS. Java bridge path unchanged. Boundary launcher/client tests unaffected.
 
 - [ ] **Step 7: Run typecheck and lint**
 
@@ -858,11 +970,12 @@ git commit -m "feat(ghidra): wire backend selection between Java and pyGhidra la
 
 **Files:**
 - Create: `bridge/pyghidra/test_dual_backend.py`
+- Create: `src/ghidra/GhidraPyGhidraIntegration.test.ts` (TS-side integration through real client)
 - Modify: `bridge/pyghidra/test_bridge_protocol.py` (expand with reference fixture comparison)
 
 **Interfaces:**
-- Consumes: running pyGhidra bridge (subprocess), running Java bridge (via REA CLI), same test binary
-- Produces: test suite that verifies pyGhidra bridge output passes the same validation as Java bridge output for a representative operation set
+- Consumes: running pyGhidra bridge (subprocess), running Java bridge (via REA CLI), same test binary, real `GhidraProviderClient` (for TS-side tests)
+- Produces: test suite that verifies pyGhidra bridge output passes the same Zod validation as Java bridge output for inventory, function (with observation envelopes), and mutation operations
 
 - [ ] **Step 1: Create dual-backend comparison test**
 
@@ -887,37 +1000,74 @@ class TestDualBackend(unittest.TestCase):
     """Compare pyGhidra bridge output against Java bridge reference fixtures."""
 
     def test_list_procedures_schema_parity(self):
-        """Both backends produce list_procedures output with identical structure."""
+        """Both backends produce list_procedures with identical structure:
+        [{address, value, procedure: {external, thunk, thunk_target}}]."""
         # 1. Load reference fixture (JSON captured from Java bridge)
         # 2. Start pyGhidra bridge against same binary
         # 3. Send list_procedures request
-        # 4. Verify: same keys, same types, same address format
+        # 4. Verify: same keys, same types, same address format (canonical)
         pass
 
-    def test_procedure_pseudo_code_type_parity(self):
-        """Both backends return string-or-null for procedure_pseudo_code."""
+    def test_procedure_pseudo_code_envelope_parity(self):
+        """Both backends wrap procedure_pseudo_code in observation envelope:
+        {value: string|null, limitations: [...]}."""
+        # Must validate the observation envelope, not just the inner value.
+        pass
+
+    def test_analyze_function_envelope_parity(self):
+        """Both backends return analyze_function with {value: <dossier>, limitations, cache_policy, relationship_coverage}."""
+        pass
+
+    def test_procedure_callers_envelope_parity(self):
+        """Both backends return procedure_callers with {value: string[], limitations}."""
+        # Inner value is string[] (canonical addresses), NOT {address, name} objects
         pass
 
     def test_ping_session_info_parity(self):
         """Both backends produce valid session info (differing only in name)."""
         pass
+
+    def test_annotate_mutation_readback(self):
+        """annotate_native_function returns {annotations, dossier, effects} after readback."""
+        pass
 ```
 
 - [ ] **Step 2: Add reference fixtures**
 
-Extract reference JSON responses from Java bridge runs for the test binary. Store as `bridge/pyghidra/fixtures/java_bridge_*.json`. The dual-backend test loads these and compares structure (not exact values).
+Extract reference JSON responses from Java bridge runs for the test binary. Store as `bridge/pyghidra/fixtures/java_bridge_*.json`. The dual-backend test loads these and compares structure (not exact values). Include at least: `ping`, `list_procedures`, `procedure_pseudo_code` (with envelope), `analyze_function` (with envelope), `xrefs`.
 
-- [ ] **Step 3: Update `test:python` in `package.json`**
+- [ ] **Step 3: Create TS-side integration test**
 
-Ensure dual-backend tests run when gated:
+Create `src/ghidra/GhidraPyGhidraIntegration.test.ts` that exercises the pyGhidra backend through the **real** `GhidraProviderClient` and its production Zod parsers. This catches refinements, envelopes, provenance, and cross-field relationships that Python-side structural comparison misses:
+
+```typescript
+import { describe, it, expect } from "vitest";
+// Gate: skip unless REA_TEST_PYGHIDRA=1
+
+describe("pyGhidra through GhidraProviderClient", () => {
+  it("list_procedures passes GhidraInventoryValues parser", async () => { ... });
+  it("procedure_pseudo_code passes functionObservationEnvelope parser", async () => { ... });
+  it("annotate_native_function passes nativeFunctionAnnotationsSchema", async () => { ... });
+  it("launcher selection, profile commitment, and client cleanup lifecycle", async () => { ... });
+});
 ```
-&& ([ "$REA_TEST_PYGHIDRA" = "1" ] && python3 -m unittest bridge/pyghidra/test_dual_backend.py -v || true)
+
+- [ ] **Step 4: Update `test:python` in `package.json`**
+
+Run dual-backend tests via `@unittest.skipUnless` gating inside Python — do NOT use the `|| true` shell pattern, which silently swallows assertion failures and crashes:
+```
+&& python3 -m unittest discover -s bridge/pyghidra -p 'test_*.py' -v
 ```
 
-- [ ] **Step 4: Run full test suite**
+This runs all `test_*.py` files; the `@unittest.skipUnless` decorator handles gating when `REA_TEST_PYGHIDRA` is unset.
+
+- [ ] **Step 5: Run full test suite including boundary tests**
 
 Run: `npm run check:fast`
 Expected: PASS (pyGhidra tests skipped without the gate).
+
+Run: `npx vitest run src/ghidra/ tests/boundary/providers/ghidra/ --reporter=verbose`
+Expected: All PASS.
 
 Run: `REA_TEST_PYGHIDRA=1 python3 -m unittest discover -s bridge/pyghidra -p 'test_*.py' -v`
 Expected: PASS (in environments with pyGhidra).
@@ -998,8 +1148,11 @@ Unix-only. Windows always uses the Java bridge.
 Run: `npm run check:fast`
 Expected: PASS.
 
-Run: `npx vitest run src/ghidra/ --reporter=verbose`
-Expected: All PASS.
+Run: `npx vitest run src/ghidra/ tests/boundary/providers/ghidra/ --reporter=verbose`
+Expected: All PASS including boundary launcher/client tests.
+
+Run: `npm pack --dry-run 2>&1 | grep pyghidra`
+Expected: All `bridge/pyghidra/` runtime files listed (including `operations/functions.py`).
 
 Run: `npm run docs:check`
 Expected: PASS.
