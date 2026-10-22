@@ -380,17 +380,21 @@ cliTest(
     const content = (env: Record<string, string>) =>
       JSON.stringify({
         mcp: {
-          rea: clientRegistrationEntry(
-            "opencode",
-            // Windows launches JavaScript through Node; otherwise setup repairs
-            // the command before this test can exercise layered environment data.
-            [
-              ...(process.platform === "win32" ? [process.execPath] : []),
-              resolve("scripts/rea.mjs"),
-              "mcp",
-            ],
-            env,
-          ),
+          rea: {
+            ...clientRegistrationEntry(
+              "opencode",
+              // Windows launches JavaScript through Node; otherwise setup repairs
+              // the command before this test can exercise layered environment data.
+              [
+                ...(process.platform === "win32" ? [process.execPath] : []),
+                resolve("scripts/rea.mjs"),
+                "mcp",
+              ],
+              env,
+            ),
+            // The derived request deadline setup writes (330 s Ghidra + 120 s).
+            timeout: 450_000,
+          },
         },
       });
     const lowerContent = content({

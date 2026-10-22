@@ -162,7 +162,10 @@ identity remains available at `identity.catalog`.
 Setup pins package-runner MCP registrations to the exact installed REA version,
 installs the matching skill and on-demand references in the same plan, and adds
 `startup_timeout_sec = 30` for Codex and Grok Build. Codex also receives a
-`tool_timeout_sec` derived from known provider startup plus operation headroom.
+`tool_timeout_sec` derived from known provider startup plus operation headroom;
+Pi (`timeout`, seconds) and OpenCode (`timeout`, milliseconds) receive the same
+derived request deadline, since their defaults of 60 s and 5000 ms are shorter
+than any provider startup.
 
 ## Limit REA to one project or agent profile
 

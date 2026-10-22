@@ -426,6 +426,8 @@ const openCodeClient = async (prefix: string) => {
 };
 
 const legacyEntry = JSON.stringify({ type: "local", command, enabled: true });
+/** REA's V2 entry, carrying the derived request deadline (330 s Ghidra + 120 s). */
+const registered = { type: "local", command: [...command], timeout: 450_000 };
 
 describe("OpenCode V2 native server table", () => {
   it("registers in mcp.servers, replaces REA's V1 entry, and uninstalls", async () => {
@@ -458,7 +460,7 @@ describe("OpenCode V2 native server table", () => {
       timeout: { catalog: 30000 },
       servers: {
         other: { type: "local", command: ["node", "other.js"] },
-        rea: { type: "local", command: [...command] },
+        rea: registered,
       },
     });
     expect(await readClientRegistrationStatuses(home)).toEqual(
@@ -501,7 +503,9 @@ describe("OpenCode V2 native server table", () => {
     expect(
       parseOpenCode(await readFile(client.configPath, "utf8")).mcp,
     ).toEqual({
-      servers: { rea: { type: "local", command: [...command] } },
+      servers: {
+        rea: registered,
+      },
     });
     expect((await systemUninstallHost(home).removeClient(client)).status).toBe(
       "removed",
@@ -581,7 +585,7 @@ describe("OpenCode V2 native server table", () => {
       parseOpenCode(await readFile(client.configPath, "utf8")).mcp,
     ).toEqual({
       servers,
-      rea: { type: "local", command: [...command], enabled: true },
+      rea: { ...registered, enabled: true },
     });
   });
 });

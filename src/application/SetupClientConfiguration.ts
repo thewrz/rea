@@ -36,6 +36,7 @@ import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { npxRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import {
   MCP_STARTUP_POLICY,
+  CLIENTS_WITH_REQUEST_DEADLINES,
   recommendedMcpToolTimeoutMs,
   recommendedMcpToolTimeoutSeconds,
 } from "../mcpStartupPolicy.js";
@@ -746,7 +747,7 @@ const clientConfigurationDesired = async (
     effective,
     providerEnvironment,
     "effective",
-    client.name === "codex" || client.name === "kimi"
+    CLIENTS_WITH_REQUEST_DEADLINES.has(client.name)
       ? resolveProviderRequestBudget
       : undefined,
   );
@@ -810,7 +811,40 @@ const clientConfigurationDesired = async (
             recommendedMcpToolTimeoutMs(validated.value.timeoutInputs),
         }
       : {}),
+    // Pi's per-request `timeout` is in seconds (default 60); OpenCode's is in
+    // milliseconds (default 5000). Both defaults are below any provider startup,
+    // so a registration carries the derived deadline unless the caller set one.
+    ...(client.name === "pi"
+      ? {
+          timeout:
+            positiveTimeout(previous, "timeout") ??
+            recommendedMcpToolTimeoutSeconds(validated.value.timeoutInputs),
+        }
+      : {}),
+    ...(client.name === "opencode"
+      ? {
+          timeout:
+            configuredOpenCodeTimeout(previous) ??
+            recommendedMcpToolTimeoutMs(validated.value.timeoutInputs),
+        }
+      : {}),
   };
+};
+
+/**
+ * OpenCode accepts `timeout` as positive milliseconds or as its phased
+ * `{ startup, catalog, execution }` table; either caller-selected form stays.
+ */
+const configuredOpenCodeTimeout = (
+  registration: unknown,
+): number | bigint | Record<string, unknown> | undefined => {
+  const positive = positiveTimeout(registration, "timeout");
+  if (positive !== undefined) return positive;
+  if (typeof registration !== "object" || registration === null) return;
+  const value: unknown = Reflect.get(registration, "timeout");
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? { ...value }
+    : undefined;
 };
 
 const positiveTimeout = (

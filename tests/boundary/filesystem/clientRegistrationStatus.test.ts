@@ -441,6 +441,66 @@ describe("Node-wrapped registration policy", () => {
   );
 });
 
+describe("Pi and OpenCode request-deadline advisories", () => {
+  it("keeps a short positive Pi timeout aligned and reports an advisory in seconds", async () => {
+    const home = await createTestTempDirectory("rea-pi-short-timeout-");
+    await mkdir(join(home, ".pi/agent"), { recursive: true });
+    const entry = resolve("scripts/rea.mjs");
+    await writeFile(
+      join(home, ".pi/agent/mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            type: "stdio",
+            command: process.execPath,
+            args: [entry, "mcp"],
+            timeout: 10,
+          },
+        },
+      }),
+    );
+    const statuses = await readClientRegistrationStatuses(home, entry, {
+      environment: {},
+    });
+    expect(statuses).toContainEqual(
+      expect.objectContaining({
+        client: "pi",
+        state: "aligned",
+        advisory: expect.stringContaining("timeout = 450 seconds"),
+      }),
+    );
+  });
+
+  it("keeps a short positive OpenCode timeout aligned and reports an advisory in milliseconds", async () => {
+    const home = await createTestTempDirectory("rea-opencode-short-timeout-");
+    await mkdir(join(home, ".config/opencode"), { recursive: true });
+    const entry = resolve("scripts/rea.mjs");
+    await writeFile(
+      join(home, ".config/opencode/opencode.json"),
+      JSON.stringify({
+        mcp: {
+          rea: {
+            type: "local",
+            command: [process.execPath, entry, "mcp"],
+            enabled: true,
+            timeout: 5000,
+          },
+        },
+      }),
+    );
+    const statuses = await readClientRegistrationStatuses(home, entry, {
+      environment: {},
+    });
+    expect(statuses).toContainEqual(
+      expect.objectContaining({
+        client: "opencode",
+        state: "aligned",
+        advisory: expect.stringContaining("timeout = 450000 ms"),
+      }),
+    );
+  });
+});
+
 it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
   "reports an inaccessible configuration target instead of omitting its registration",
   async () => {

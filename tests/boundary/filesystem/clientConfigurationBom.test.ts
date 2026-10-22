@@ -67,7 +67,12 @@ describe.each(["vscode", "copilot_cli", "opencode", "commandcode"])(
           label: "left\uFEFFright",
           [serversKey]: {
             other: { command: "other" },
-            rea: clientRegistrationEntry(client.format, command, {}),
+            rea: {
+              ...clientRegistrationEntry(client.format, command, {}),
+              // OpenCode's default 5000 ms request timeout is replaced by REA's
+              // derived deadline (330 s Ghidra startup + 120 s headroom).
+              ...(client.name === "opencode" ? { timeout: 450_000 } : {}),
+            },
           },
           theme: "dark",
         });
