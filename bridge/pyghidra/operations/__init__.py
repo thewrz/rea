@@ -1,5 +1,6 @@
 """Bridge operations, keyed by the wire method each one answers."""
 from operations import inventory, memory, naming
+from operations.functions import FUNCTION_OPERATIONS
 
 INVENTORY_HANDLERS = {
     "read_binary_inventory_summary": inventory.read_binary_inventory_summary,
@@ -20,3 +21,5 @@ INVENTORY_HANDLERS = {
     "set_address_name": naming.set_address_name,
     "set_addresses_names": naming.set_addresses_names,
 }
+
+FUNCTION_HANDLERS = FUNCTION_OPERATIONS

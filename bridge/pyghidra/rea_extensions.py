@@ -106,6 +106,29 @@ class ExtensionHost:
             summaries.append(summary)
         return summaries
 
+    def inspect_data_type(self, program, data_type, address, monitor):
+        """The first extension's type metadata, or None when no extension describes the type."""
+        from ghidra.program.model.address import Address
+        from ghidra.program.model.data import DataType
+        from ghidra.program.model.listing import Program
+        from ghidra.util.task import TaskMonitor
+        from java.lang.reflect import InvocationTargetException
+
+        for _, instance, _ in self._loaded:
+            method = instance.getClass().getMethod(
+                "inspectDataType", Program.class_, DataType.class_, Address.class_, TaskMonitor.class_
+            )
+            try:
+                response = method.invoke(instance, program, data_type, address, monitor)
+            except InvocationTargetException as exception:
+                cause = exception.getCause()
+                if "CancelledException" in str(cause.getClass().getName()):
+                    raise cause from exception
+                raise RuntimeError(f"Ghidra extension type inspection failed: {cause}") from exception
+            if response is not None:
+                return _to_dict(response, "Invalid extension type metadata result")
+        return None
+
     def close(self):
         failure = None
         loaded, self._loaded = self._loaded, []

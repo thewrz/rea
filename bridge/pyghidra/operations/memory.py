@@ -57,7 +57,7 @@ def hash_memory(session, start, length):
     )
 
 
-def _is_target_source(session, file_bytes):
+def is_target_source(session, file_bytes):
     """Only an unshifted copy of the admitted target can establish original file offsets."""
     for known, matched in session.target_sources:
         if known == file_bytes:
@@ -76,7 +76,7 @@ def target_file_offset(session, block, address):
         backing = source.getFileBytes()
         if not source.contains(address) or backing.isEmpty():
             continue
-        if not _is_target_source(session, backing.get()):
+        if not is_target_source(session, backing.get()):
             continue
         candidate = int(source.getFileBytesOffset(address))
         if candidate < 0:
@@ -315,7 +315,7 @@ def search_bytes(session, params):
     }
 
 
-def _source_files(session, files):
+def _source_files(files):
     return [
         {
             "name": str(file.getFilename()),
@@ -421,7 +421,7 @@ def inspect_native_load_image(session, params):
             "compiler_spec_id": str(program.getCompilerSpec().getCompilerSpecID().getIdAsString()),
             "image_base": session.addresses.format(program.getImageBase()),
             "default_address_space": str(session.addresses.default_space.getName()),
-            "source_files": _source_files(session, files),
+            "source_files": _source_files(files),
             "mappings": _mappings(session, files),
             "relocations": _relocations(session),
             "entry_points": [session.addresses.format(entry) for entry in entries],

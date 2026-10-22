@@ -8,7 +8,7 @@ import signal
 import socket
 import sys
 
-from operations import INVENTORY_HANDLERS
+from operations import FUNCTION_HANDLERS, INVENTORY_HANDLERS
 from rea_addresses import AddressCodec
 from rea_descriptor import parse_descriptor
 from rea_extensions import ExtensionHost
@@ -25,11 +25,12 @@ from rea_session import Session, exception_label
 from rea_startup import (
     analyze_program,
     import_target,
+    open_decompiler,
     start_ghidra,
     verify_imported_target,
 )
 
-HANDLERS = {**INVENTORY_HANDLERS}
+HANDLERS = {**INVENTORY_HANDLERS, **FUNCTION_HANDLERS}
 INVALID_REQUEST_MESSAGE = "Bridge request is invalid"
 
 
@@ -142,11 +143,13 @@ def run_bridge(descriptor_dict, descriptor_path, target_path):
 
     workspace = import_target(runtime_root, target_path, descriptor)
     extensions = ExtensionHost()
+    decompiler = None
     try:
         program = workspace.program
         verify_imported_target(program, descriptor)
         analyze_program(program, TaskMonitor.DUMMY, descriptor)
         extensions.analyze(descriptor.analysis_extensions, program, TaskMonitor.DUMMY)
+        decompiler = open_decompiler(program)
         session = Session(
             program=program,
             monitor=TaskMonitor.DUMMY,
@@ -154,10 +157,15 @@ def run_bridge(descriptor_dict, descriptor_path, target_path):
             profile_digest=descriptor.profile_digest,
             addresses=AddressCodec(program),
             extensions=extensions,
+            decompiler=decompiler,
         )
         _serve(session, descriptor, provider_version)
     finally:
         try:
-            extensions.close()
+            if decompiler is not None:
+                decompiler.dispose()
         finally:
-            workspace.close()
+            try:
+                extensions.close()
+            finally:
+                workspace.close()

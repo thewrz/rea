@@ -89,6 +89,23 @@ def import_target(runtime_root, target_path, descriptor):
             project.close()
 
 
+def open_decompiler(program):
+    """One decompiler per session; an annotation edit must flush its cache."""
+    from ghidra.app.decompiler import DecompInterface, DecompileOptions
+
+    options = DecompileOptions()
+    options.setMaxInstructions(2**31 - 1)
+    decompiler = DecompInterface()
+    decompiler.setOptions(options)
+    decompiler.toggleCCode(True)
+    decompiler.toggleSyntaxTree(True)
+    decompiler.toggleJumpLoads(True)
+    if not decompiler.openProgram(program):
+        decompiler.dispose()
+        raise RuntimeError("Ghidra decompiler could not open the imported Program")
+    return decompiler
+
+
 def verify_imported_target(program, descriptor):
     """Echoing an expected digest is not import attestation; measure the imported bytes."""
     if program.getExecutableFormat() == "Raw Binary":

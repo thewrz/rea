@@ -27,9 +27,10 @@ FIXTURE_SOURCE = """
 #include <string.h>
 static const char *greeting = "hello rea pyghidra";
 int add(int a, int b) { return a + b; }
+int scale_by_three(int x) { return x * 3; }
 int main(int argc, char **argv) {
   printf("%s %d\\n", greeting, add(argc, 2));
-  return (int)strlen(greeting);
+  return (int)strlen(greeting) + scale_by_three(argc);
 }
 """
 GREETING = b"hello rea pyghidra"
@@ -38,6 +39,16 @@ INVENTORY_METHODS = {
     "address_to_file_offset", "address_name", "list_documents", "list_names", "list_procedures",
     "list_segments", "list_strings", "procedure_address", "resolve_containing_procedure",
     "search_procedures", "search_strings", "set_address_name", "set_addresses_names",
+}
+FUNCTION_METHODS = {
+    "analyze_function", "annotate_native_function", "inspect_native_data_type",
+    "inspect_native_instruction", "procedure_assembly", "procedure_callees", "procedure_callers",
+    "procedure_info", "procedure_pseudo_code", "procedure_references", "read_function_instructions",
+    "resolve_native_call_targets", "xrefs",
+}
+ENVELOPE_METHODS = {
+    "analyze_function", "procedure_assembly", "procedure_callees", "procedure_callers",
+    "procedure_info", "procedure_pseudo_code", "read_function_instructions", "procedure_references",
 }
 
 
@@ -167,6 +178,12 @@ class TestBridgeProtocol(unittest.TestCase):
         procedures = cls.client.request("list_procedures", {"document": None})["result"]
         cls.main_address = next(item["address"] for item in procedures if item["value"] == "main")
         cls.add_address = next(item["address"] for item in procedures if item["value"] == "add")
+        cls.scale_address = next(
+            item["address"] for item in procedures if item["value"] == "scale_by_three"
+        )
+        cls.external_address = next(
+            (item["address"] for item in procedures if item["procedure"]["external"]), None
+        )
         strings = cls.client.request("list_strings", {"document": None, "address": None})["result"]
         cls.greeting_address = next(
             item["address"] for item in strings if item["value"] == GREETING.decode()
@@ -209,7 +226,7 @@ class TestBridgeProtocol(unittest.TestCase):
     def test_ping_advertises_exactly_the_registered_methods(self):
         capabilities = self.ask("ping")["capabilities"]
         self.assertEqual(len(capabilities), len(set(capabilities)))
-        self.assertEqual(set(capabilities), INVENTORY_METHODS | {"ping", "shutdown"})
+        self.assertEqual(set(capabilities), INVENTORY_METHODS | FUNCTION_METHODS | {"ping", "shutdown"})
 
     def test_wrong_token_is_refused_and_the_session_continues(self):
         refused = self.client.request("ping", token="x" * 32)
@@ -445,6 +462,259 @@ class TestBridgeProtocol(unittest.TestCase):
         self.assertEqual(conflict, {third: False, third[2:]: False})
         self.assertIsNone(self.ask("address_name", {"document": None, "address": third}))
         self.assertEqual(self.ask("address_name", {"document": None, "address": first}), "batch_one")
+
+    def procedure(self, address):
+        return {"document": None, "procedure": address}
+
+    def test_function_operations_answer_with_observation_envelopes(self):
+        calls = {
+            "analyze_function": {"procedure": self.main_address},
+            "procedure_assembly": self.procedure(self.main_address),
+            "procedure_callees": self.procedure(self.main_address),
+            "procedure_callers": self.procedure(self.add_address),
+            "procedure_info": self.procedure(self.main_address),
+            "procedure_pseudo_code": self.procedure(self.main_address),
+            "read_function_instructions": self.procedure(self.main_address),
+            "procedure_references": {**self.procedure(self.main_address), "direction": "outgoing"},
+        }
+        self.assertEqual(set(calls), ENVELOPE_METHODS)
+        for method, params in calls.items():
+            result = self.ask(method, params)
+            self.assertIn("value", result, method)
+            self.assertIsInstance(result["limitations"], list, method)
+            self.assertTrue(all(isinstance(item, str) for item in result["limitations"]), method)
+        for method in ("analyze_function", "procedure_callers", "procedure_callees"):
+            self.assertIn(
+                self.ask(method, calls[method])["relationship_coverage"]["status"],
+                {"complete", "partial", "unknown"},
+            )
+
+    def test_procedure_pseudo_code_decompiles_and_selects_by_file_offset(self):
+        text = self.ask("procedure_pseudo_code", self.procedure("main"))["value"]
+        self.assertIn("main", text)
+        self.assertNotIn("selection", self.ask("procedure_pseudo_code", self.procedure("main")))
+        offset = self.ask(
+            "address_to_file_offset", {"document": None, "address": self.main_address}
+        )["file_offset"]
+        selected = self.ask("procedure_pseudo_code", self.procedure(f"file-offset:{hex(offset)}"))
+        self.assertEqual(selected["value"], text)
+        self.assertEqual(
+            selected["selection"],
+            {
+                "file_offset": offset,
+                "mapped_address": self.main_address,
+                "procedure_address": self.main_address,
+            },
+        )
+        self.ask_failure(
+            "procedure_pseudo_code", self.procedure("file-offset:0xfffffff"), "not_found"
+        )
+        self.ask_failure("procedure_pseudo_code", self.procedure("file-offset:zz"), "invalid_request")
+
+    def test_procedure_pseudo_code_is_null_for_external_functions(self):
+        if self.external_address is None:
+            self.skipTest("the fixture has no external function")
+        self.assertIsNone(
+            self.ask("procedure_pseudo_code", self.procedure(self.external_address))["value"]
+        )
+
+    def test_analyze_function_returns_the_full_dossier(self):
+        result = self.ask("analyze_function", {"procedure": self.add_address})
+        dossier = result["value"]
+        self.assertEqual(dossier["procedure"]["address"], self.add_address)
+        self.assertTrue(dossier["procedure"]["signature"])
+        self.assertTrue(dossier["pseudocode"])
+        self.assertTrue(dossier["assembly"][0].startswith(self.add_address + ": "))
+        self.assertEqual([item["address"] for item in dossier["callers"]], [self.main_address])
+        self.assertEqual(dossier["unresolved_calls"], [])
+        self.assertEqual(dossier["facet_availability"]["pseudocode"], {"available": True})
+        self.assertTrue(dossier["basic_blocks"])
+        self.assertTrue(dossier["native_api"]["available"])
+        self.assertEqual(len(dossier["native_api"]["parameters"]), 2)
+        self.assertTrue(dossier["native_value_flow"]["available"])
+        self.assertNotIn("cache_policy", result)
+        main = self.ask("analyze_function", {"procedure": self.main_address})["value"]
+        self.assertIn(self.add_address, [item["address"] for item in main["callees"]])
+        self.assertIn(
+            GREETING.decode(), [item["value"] for item in main["referenced_strings"]]
+        )
+        self.ask_failure("analyze_function", {"procedure": "no_such_function"}, "not_found")
+        self.ask_failure("analyze_function", {"document": None, "procedure": "main"}, "invalid_request")
+
+    def test_callers_and_callees_are_canonical_addresses(self):
+        callees = self.ask("procedure_callees", self.procedure(self.main_address))["value"]
+        self.assertEqual(callees, sorted(callees, key=lambda text: int(text, 16)))
+        self.assertIn(self.add_address, callees)
+        self.assertIn(self.scale_address, callees)
+        self.assertEqual(
+            self.ask("procedure_callers", self.procedure(self.add_address))["value"],
+            [self.main_address],
+        )
+
+    def test_procedure_info_reports_boundaries(self):
+        info = self.ask("procedure_info", self.procedure(self.add_address))["value"]
+        self.assertEqual(info["entrypoint"], self.add_address)
+        self.assertEqual(info["length"], info["body"]["total_bytes"])
+        self.assertGreaterEqual(info["basicblock_count"], 1)
+        self.assertEqual(info["classification"]["provenance"], "ghidra-function-manager")
+        self.assertIn("(", info["signature"])
+
+    def test_read_function_instructions_and_assembly_agree(self):
+        instructions = self.ask("read_function_instructions", self.procedure(self.add_address))
+        assembly = self.ask("procedure_assembly", self.procedure(self.add_address))["value"]
+        self.assertEqual(instructions["value"]["procedure"]["address"], self.add_address)
+        self.assertEqual("\n".join(instructions["value"]["instructions"]), assembly)
+        self.assertEqual(
+            instructions["value"]["limitations"][2:], instructions["limitations"]
+        )
+
+    def test_procedure_references_in_both_directions(self):
+        incoming = self.ask(
+            "procedure_references", {**self.procedure(self.add_address), "direction": "incoming"}
+        )["value"]
+        self.assertEqual(incoming["direction"], "incoming")
+        self.assertTrue(
+            any(edge["kind"]["call"] for edge in incoming["references"]), incoming["references"]
+        )
+        self.assertEqual(incoming["unresolved_calls"], [])
+        outgoing = self.ask(
+            "procedure_references", {**self.procedure(self.main_address), "direction": "outgoing"}
+        )["value"]
+        self.assertIn(
+            self.add_address, [edge["target_address"] for edge in outgoing["references"]]
+        )
+        self.ask_failure(
+            "procedure_references",
+            {**self.procedure(self.main_address), "direction": "sideways"},
+            "invalid_request",
+        )
+
+    def test_xrefs_lists_reference_sources(self):
+        sources = self.ask("xrefs", {"document": None, "address": self.add_address})
+        self.assertTrue(sources)
+        low, high = int(self.main_address, 16), int(self.main_address, 16) + 0x100
+        self.assertTrue(all(low <= int(source, 16) < high for source in sources), sources)
+        self.assertEqual(sources, sorted(sources, key=lambda text: int(text, 16)))
+
+    def call_site_to(self, callee_address):
+        lines = self.ask("procedure_assembly", self.procedure(self.main_address))["value"].split("\n")
+        line = next(
+            line for line in lines if "call" in line.lower() and callee_address in line.lower()
+        )
+        return line.split(":", 1)[0]
+
+    def test_inspect_native_instruction_decodes_a_call(self):
+        site = self.call_site_to(self.add_address)
+        result = self.ask("inspect_native_instruction", {"document": None, "address": site})
+        self.assertEqual(result["status"], "decoded")
+        self.assertEqual(result["procedure"], self.main_address)
+        self.assertEqual(result["flow"]["kind"], "call")
+        self.assertEqual(result["flow"]["direct_destinations"], [self.add_address])
+        self.assertTrue(result["bytes"])
+        self.assertEqual(len(result["bytes"]) // 2, result["length"])
+        self.assertTrue(any(ref["target_address"] == self.add_address for ref in result["references"]))
+        inside = hex(int(site, 16) + 1)
+        self.assertEqual(
+            self.ask("inspect_native_instruction", {"document": None, "address": inside})["status"],
+            "not-instruction-boundary",
+        )
+        self.assertEqual(
+            self.ask("inspect_native_instruction", {"document": None, "address": "0xdeadbeef00"})["status"],
+            "outside-memory",
+        )
+
+    def test_resolve_native_call_targets_names_the_callee(self):
+        site = self.call_site_to(self.scale_address)
+        result = self.ask("resolve_native_call_targets", {"document": None, "address": site})
+        self.assertEqual((result["status"], result["mechanism"]), ("direct", "direct"))
+        self.assertEqual([target["procedure"] for target in result["targets"]], [self.scale_address])
+        plain = self.ask("resolve_native_call_targets", {"document": None, "address": self.main_address})
+        self.assertEqual((plain["status"], plain["targets"]), ("not-call", []))
+
+    def test_inspect_native_data_type_by_type_and_address(self):
+        found = self.ask("inspect_native_data_type", {"document": None, "type": "/int", "address": None})
+        self.assertEqual((found["status"], found["kind"]), ("available", "scalar"))
+        self.assertEqual(found["size_bytes"], 4)
+        self.assertFalse(found["truncated"])
+        missing = self.ask("inspect_native_data_type", {"document": None, "type": "/no/such", "address": None})
+        self.assertEqual((missing["status"], missing["kind"]), ("unavailable", "unavailable"))
+        undefined = self.ask(
+            "inspect_native_data_type", {"document": None, "type": None, "address": self.main_address}
+        )
+        self.assertEqual(undefined["status"], "unavailable")
+        self.ask_failure("inspect_native_data_type", {"document": None, "type": None, "address": None}, "invalid_request")
+        self.ask_failure(
+            "inspect_native_data_type",
+            {"document": None, "type": "/int", "address": self.main_address},
+            "invalid_request",
+        )
+
+    def test_annotate_native_function_commits_only_with_readback(self):
+        result = self.ask(
+            "annotate_native_function",
+            {
+                "procedure": self.scale_address,
+                "name": "annotated_scale",
+                "comment": "REA plate comment",
+                "inline_comment": "REA eol comment",
+            },
+        )
+        self.assertEqual(
+            result["annotations"],
+            {
+                "address": self.scale_address,
+                "name": "annotated_scale",
+                "comment": "REA plate comment",
+                "inline_comment": "REA eol comment",
+            },
+        )
+        self.assertEqual(result["dossier"]["procedure"]["name"], "annotated_scale")
+        self.assertEqual(
+            result["effects"],
+            {
+                "scope": "session-analysis-database",
+                "source_bytes_modified": False,
+                "persists_after_close": False,
+            },
+        )
+        self.assertEqual(
+            self.ask("procedure_address", self.procedure("annotated_scale")), self.scale_address
+        )
+        dossier = self.ask("analyze_function", {"procedure": self.scale_address})["value"]
+        self.assertIn(
+            {"address": self.scale_address, "kind": "comment", "text": "REA plate comment"},
+            dossier["comments"],
+        )
+        cleared = self.ask(
+            "annotate_native_function", {"procedure": self.scale_address, "comment": ""}
+        )
+        self.assertIsNone(cleared["annotations"]["comment"])
+        self.assertEqual(cleared["annotations"]["inline_comment"], "REA eol comment")
+
+    def test_annotate_native_function_rolls_back_a_rejected_edit(self):
+        self.ask_failure(
+            "annotate_native_function",
+            {"procedure": self.add_address, "comment": "must roll back", "name": "has space"},
+            "invalid_function_name",
+        )
+        dossier = self.ask("analyze_function", {"procedure": self.add_address})["value"]
+        self.assertNotIn("must roll back", [item["text"] for item in dossier["comments"]])
+        self.ask_failure("annotate_native_function", {"procedure": self.add_address}, "invalid_request")
+        self.ask_failure(
+            "annotate_native_function", {"procedure": self.add_address, "extra": "x"}, "invalid_request"
+        )
+        message = self.ask_failure(
+            "annotate_native_function",
+            {"procedure": self.add_address, "comment": "bad\u0000text"},
+            "invalid_request",
+        )
+        self.assertIn("NUL", message)
+        if self.external_address is not None:
+            self.ask_failure(
+                "annotate_native_function",
+                {"procedure": self.external_address, "comment": "x"},
+                "invalid_request",
+            )
 
 
 @unittest.skipUnless(ENABLED, "pyGhidra tests require REA_TEST_PYGHIDRA=1")

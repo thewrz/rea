@@ -38,6 +38,7 @@ class Session:
     profile_digest: str
     addresses: AddressCodec
     extensions: Any
+    decompiler: Any = None
     target_sources: list = field(default_factory=list)
     _inventories: dict = field(default_factory=dict)
 
@@ -48,3 +49,5 @@ class Session:
 
     def invalidate_caches(self):
         self._inventories.clear()
+        if self.decompiler is not None:
+            self.decompiler.flushCache()
