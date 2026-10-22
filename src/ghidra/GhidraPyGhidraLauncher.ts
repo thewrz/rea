@@ -79,6 +79,7 @@ export class GhidraPyGhidraLauncher implements GhidraLauncher {
     const paths = ghidraRuntimePaths(session.runtimeRoot);
     let started: SpawnedOwnedProviderProcess | undefined;
     try {
+      // Ghidra's framework creates JDK resolution and ghidra.properties here even under pyGhidra
       await createGhidraRuntimeDirectories(
         paths,
         platform,
@@ -94,6 +95,7 @@ export class GhidraPyGhidraLauncher implements GhidraLauncher {
       started = await (this.options.spawnProcess ?? spawnOwnedProviderProcess)({
         command: this.options.pythonPath,
         arguments: [
+          "-I",
           this.options.bridgeScriptPath,
           paths.descriptorPath,
           session.targetPath,

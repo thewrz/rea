@@ -14,6 +14,7 @@ from rea_descriptor import parse_descriptor
 from rea_extensions import ExtensionHost
 from rea_handshake import session_info
 from rea_protocol import (
+    INVALID_REQUEST_ID,
     RequestFailure,
     decode_request,
     encode_response,
@@ -70,7 +71,7 @@ def _serve_client(connection, session, descriptor, provider_version):
             request = decode_request(line)
         except ValueError:
             connection.sendall(
-                encode_response(1, error=failure_payload("invalid_request", INVALID_REQUEST_MESSAGE))
+                encode_response(INVALID_REQUEST_ID, error=failure_payload("invalid_request", INVALID_REQUEST_MESSAGE))
             )
             return
         if not token_matches(request.token, descriptor.token):

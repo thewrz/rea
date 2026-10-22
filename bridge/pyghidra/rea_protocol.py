@@ -35,7 +35,7 @@ def decode_request(line):
     if not isinstance(parsed, dict) or set(parsed) != REQUEST_KEYS:
         raise ValueError("Bridge request fields are invalid")
     request_id = parsed["id"]
-    if not _is_integer(request_id) or request_id <= 0:
+    if not _is_integer(request_id) or not 0 < request_id <= MAX_SAFE_INTEGER:
         raise ValueError("Bridge request id is invalid")
     if not isinstance(parsed["token"], str) or not isinstance(parsed["method"], str):
         raise ValueError("Bridge request token or method is invalid")

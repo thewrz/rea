@@ -802,23 +802,23 @@ class TestBridgeLifecycle(unittest.TestCase):
 
     def test_decompiler_output_passes_schema_despite_formatting_differences(self):
         """Review Focus #1: decompiler divergence."""
-        pass
+        self.skipTest("Review Focus stub — not yet implemented")
 
     def test_nondefault_address_space_encoding(self):
         """Review Focus #2: address space encoding."""
-        pass
+        self.skipTest("Review Focus stub — not yet implemented")
 
     def test_startup_timeout_respected(self):
         """Review Focus #3: slow JVM startup."""
-        pass
+        self.skipTest("Review Focus stub — not yet implemented")
 
-    def test_unknown_descriptor_field_tolerated(self):
+    def test_unknown_descriptor_field_rejected(self):
         """Review Focus #4: descriptor field evolution."""
-        pass
+        self.skipTest("Review Focus stub — not yet implemented")
 
     def test_shutdown_during_operation(self):
         """Review Focus #5: concurrent shutdown race."""
-        pass
+        self.skipTest("Review Focus stub — not yet implemented")
 
 
 if __name__ == "__main__":

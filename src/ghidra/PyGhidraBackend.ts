@@ -52,6 +52,7 @@ export const inspectPyGhidraAvailability = async (
     const { stdout } = await execFileOutput(
       pythonPath,
       [
+        "-I",
         "-c",
         "import importlib.metadata as m; import pyghidra; print(m.version('pyghidra'))",
       ],
@@ -63,7 +64,7 @@ export const inspectPyGhidraAvailability = async (
     signal?.throwIfAborted();
     await execFileOutput(
       pythonPath,
-      ["-c", "import pyghidra; pyghidra.start()"],
+      ["-I", "-c", "import pyghidra; pyghidra.start()"],
       { env, timeout: JVM_START_TIMEOUT_MS, ...(signal ? { signal } : {}) },
     );
     return { available: true, version, pythonPath };
