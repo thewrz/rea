@@ -1,4 +1,6 @@
 import { execFileOutput } from "../process/ExecFileOutput.js";
+import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import { isGhidraPspTarget } from "./GhidraPspProfile.js";
 
 /** Whether a pyGhidra interpreter can import pyghidra and start a JVM against the selected Ghidra. */
 export type PyGhidraAvailability =
@@ -92,3 +94,16 @@ export const resolveGhidraBackend = (
     );
   return { selected: "java", reason: availability.reason };
 };
+
+const JAVA_ONLY_FORMATS: ReadonlySet<string> = new Set([
+  "dos-mz",
+  "dos-com",
+  "raw-binary",
+]);
+
+/** The pyGhidra bridge implements none of the PSP, DOS or raw-binary import modes in Phase 1. */
+export const pyGhidraSupportsTarget = (target: BinaryTarget): boolean =>
+  !isGhidraPspTarget(target) && !JAVA_ONLY_FORMATS.has(target.format);
+
+export const PYGHIDRA_UNSUPPORTED_TARGET_REASON =
+  "The pyGhidra backend does not support PSP, DOS MZ, DOS COM or raw-binary targets; set REA_GHIDRA_BACKEND=auto or java.";

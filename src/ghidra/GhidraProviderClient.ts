@@ -1,8 +1,6 @@
 import { z } from "zod";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { artifactFilePrimaryFailure } from "../artifacts/ArtifactFileOperation.js";
-import { fileURLToPath } from "node:url";
-import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
 
 import {
   createAnalysisExecution,
@@ -78,7 +76,11 @@ import {
 import { ghidraRiscvLimitations } from "./GhidraRiscvProfile.js";
 import { ghidraPePdbLimitations } from "./GhidraPeProfile.js";
 import { unverifiedGhidraBuildLimitation } from "./GhidraReleasePolicy.js";
-import { GhidraHeadlessLauncher } from "./GhidraLauncher.js";
+import {
+  createGhidraLauncher,
+  type GhidraLauncherBackend,
+} from "./GhidraLauncherFactory.js";
+import { pyGhidraSupportsTarget } from "./PyGhidraBackend.js";
 import { attestGhidraNativeLoadImage } from "./GhidraLoadImageAttest.js";
 import type { NativeAotPeResult } from "../domain/native/nativeAotPe.js";
 import { GhidraNativeAotSnapshotOwner } from "./GhidraNativeAotSnapshotOwner.js";
@@ -137,6 +139,7 @@ export const createGhidraProviderClient = (input: {
   readonly admission: GhidraClientAdmission;
   readonly context?: AnalysisClientContext;
   readonly installation: GhidraInstallationInspection;
+  readonly backend: GhidraLauncherBackend;
   readonly signal: AbortSignal;
 }): Result<AnalysisClient, AnalysisError> => {
   const { config, logger, clientFactory, context, installation } = input;
@@ -144,6 +147,17 @@ export const createGhidraProviderClient = (input: {
   const prerequisites = ghidraClientPrerequisites(profile, installation);
   if (!prerequisites.ok) return err(prerequisites.error);
   const committedProfile = prerequisites.value.profile;
+  const backendMismatch = ghidraBackendMismatch(
+    committedProfile,
+    input.backend,
+    target,
+  );
+  if (backendMismatch !== null)
+    return err(
+      new ProviderAdapterError("ghidra", "open_binary", {
+        diagnostics: { reason: backendMismatch },
+      }),
+    );
   const psp = isGhidraPspTarget(target);
   const pspExtension = psp
     ? ghidraPspExtensionSchema.safeParse(
@@ -343,46 +357,44 @@ export const createGhidraProviderClient = (input: {
   const client = clientFactory({
     startupTimeoutMs: config.ghidraStartupTimeoutMs,
     platform: installation.platform,
-    launcher: new GhidraHeadlessLauncher({
-      environment: input.environment,
-      analyzeHeadlessPath: prerequisites.value.analyzeHeadlessPath,
-      configurationDirectoryName:
-        prerequisites.value.configurationDirectoryName,
-      javaHome: prerequisites.value.javaHome,
-      ...(installation.javaVmName === undefined
-        ? {}
-        : { javaVmName: installation.javaVmName }),
-      bridgeScriptPath: fileURLToPath(
-        new URL(
-          `../../bridge/ghidra/${GHIDRA_BRIDGE_SOURCES.bridge}`,
-          import.meta.url,
-        ),
-      ),
-      ...(pspExtension?.success === true
-        ? { pspExtension: pspExtension.data }
-        : {}),
-      ...(softFloat ? { mipsSoftFloat: true as const } : {}),
-      ...(target.format === "dos-mz" ? { dosMz: true } : {}),
-      ...(target.format === "dos-com" ? { dosCom: true } : {}),
-      ...(rawLanguage === undefined || target.format !== "raw-binary"
-        ? {}
-        : {
-            rawBinary: {
-              languageId: rawLanguage.languageId,
-              compilerSpecId: rawLanguage.compilerSpecId,
-              baseAddr: target.entryPoint,
-            },
-          }),
-      ...(importLanguage === undefined
-        ? {}
-        : { languageOverride: importLanguage }),
-      ...(config.ghidraDisabledAnalyzers === undefined
-        ? {}
-        : { disabledAnalyzers: config.ghidraDisabledAnalyzers }),
-      ...(seeds === undefined ? {} : { analysisSeeds: seeds }),
-      platform: installation.platform,
-      ...(extensions.length === 0 ? {} : { analysisExtensions: extensions }),
-    }),
+    launcher: createGhidraLauncher(
+      input.backend,
+      prerequisites.value.installDir,
+      {
+        environment: input.environment,
+        analyzeHeadlessPath: prerequisites.value.analyzeHeadlessPath,
+        configurationDirectoryName:
+          prerequisites.value.configurationDirectoryName,
+        javaHome: prerequisites.value.javaHome,
+        ...(installation.javaVmName === undefined
+          ? {}
+          : { javaVmName: installation.javaVmName }),
+        ...(pspExtension?.success === true
+          ? { pspExtension: pspExtension.data }
+          : {}),
+        ...(softFloat ? { mipsSoftFloat: true as const } : {}),
+        ...(target.format === "dos-mz" ? { dosMz: true } : {}),
+        ...(target.format === "dos-com" ? { dosCom: true } : {}),
+        ...(rawLanguage === undefined || target.format !== "raw-binary"
+          ? {}
+          : {
+              rawBinary: {
+                languageId: rawLanguage.languageId,
+                compilerSpecId: rawLanguage.compilerSpecId,
+                baseAddr: target.entryPoint,
+              },
+            }),
+        ...(importLanguage === undefined
+          ? {}
+          : { languageOverride: importLanguage }),
+        ...(config.ghidraDisabledAnalyzers === undefined
+          ? {}
+          : { disabledAnalyzers: config.ghidraDisabledAnalyzers }),
+        ...(seeds === undefined ? {} : { analysisSeeds: seeds }),
+        platform: installation.platform,
+        ...(extensions.length === 0 ? {} : { analysisExtensions: extensions }),
+      },
+    ),
     targetPath:
       installation.platform === "win32"
         ? (target.sourcePath ?? target.path)
@@ -758,6 +770,7 @@ export const createGhidraProviderClient = (input: {
 };
 
 interface GhidraClientCoordinates {
+  readonly installDir: string;
   readonly analyzeHeadlessPath: string;
   readonly configurationDirectoryName: string | null;
   readonly javaHome: string;
@@ -800,6 +813,23 @@ export const admitGhidraClient = (
   return ok({ target, profile });
 };
 
+const ghidraBackendMismatch = (
+  profile: AnalysisProfileCommitment,
+  backend: GhidraLauncherBackend,
+  target: BinaryTarget,
+): string | null => {
+  const committed = z
+    .object({ kind: z.literal("pyghidra") })
+    .safeParse(profile.parameters.analysis_backend).success
+    ? "pyghidra"
+    : "java";
+  if (committed !== backend.kind)
+    return `The committed analysis profile selects the ${committed} backend but the current configuration selects ${backend.kind}; reopen the target to resolve a new profile.`;
+  return backend.kind === "pyghidra" && !pyGhidraSupportsTarget(target)
+    ? "The pyGhidra backend does not support this target's import mode."
+    : null;
+};
+
 const ghidraClientPrerequisites = (
   profile: AnalysisProfileCommitment,
   installation: GhidraInstallationInspection,
@@ -834,6 +864,7 @@ const ghidraClientPrerequisites = (
       }),
     );
   return ok({
+    installDir: installation.installDir,
     analyzeHeadlessPath: installation.analyzeHeadlessPath,
     configurationDirectoryName: installation.configurationDirectoryName,
     javaHome: installation.javaHome,

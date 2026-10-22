@@ -90,6 +90,11 @@ const provider = (
     {},
     host,
     clientFactory,
+    () =>
+      Promise.resolve({
+        available: false,
+        reason: "pyGhidra disabled for Java-specific fixtures",
+      }),
   );
 };
 

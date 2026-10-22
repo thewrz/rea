@@ -53,8 +53,20 @@ import {
 import {
   JAVA_BACKEND,
   resolveGhidraAnalysisProfile,
+  type GhidraBackendIdentity,
 } from "./GhidraAnalysisProfile.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisUnsupportedTargetError,
+} from "../domain/analysisErrorCore.js";
+import {
+  inspectPyGhidraAvailability,
+  PYGHIDRA_UNSUPPORTED_TARGET_REASON,
+  pyGhidraSupportsTarget,
+  resolveGhidraBackend,
+  type PyGhidraAvailability,
+} from "./PyGhidraBackend.js";
+import type { GhidraLauncherBackend } from "./GhidraLauncherFactory.js";
 import { resolveGhidraAnalysisSeeds } from "./GhidraAnalysisSeeds.js";
 import {
   admitGhidraLanguageOverride,
@@ -96,6 +108,19 @@ const SUPPORTED_ARCHITECTURES = new Set([
   "hexagon",
 ]);
 
+/** Probe seam; the default starts a real pyGhidra JVM against the inspected installation. */
+export type PyGhidraProbe = typeof inspectPyGhidraAvailability;
+
+interface SelectedGhidraBackend {
+  readonly identity: GhidraBackendIdentity;
+  readonly launcher: GhidraLauncherBackend;
+}
+
+const JAVA_SELECTION: SelectedGhidraBackend = {
+  identity: JAVA_BACKEND,
+  launcher: { kind: "java" },
+};
+
 /** Ghidra candidate backed by an isolated ephemeral headless import. */
 export class GhidraProvider implements AnalysisProviderCandidate {
   readonly #inspectionResources = new ArtifactResourceScope();
@@ -121,6 +146,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     run: (operation) => this.#inspectionResources.run(operation),
   };
   #closing: Promise<Result<null, AnalysisError>> | undefined;
+  #pyGhidraAvailability: Promise<PyGhidraAvailability> | undefined;
   private readonly environment: NodeJS.ProcessEnv;
 
   constructor(
@@ -130,6 +156,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
     private readonly installationHost?: GhidraInstallationHost,
     private readonly clientFactory: GhidraProviderClientFactory = (options) =>
       new GhidraClient(options),
+    private readonly pyGhidraProbe: PyGhidraProbe = inspectPyGhidraAvailability,
   ) {
     this.environment = snapshotEnvironment(
       environment,
@@ -312,6 +339,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       })
       .finally(() => {
         this.#lifetime = new AbortController();
+        this.#pyGhidraAvailability = undefined;
         this.#closing = undefined;
       });
     return this.#closing;
@@ -386,6 +414,13 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       "resolve_analysis_profile",
       options?.scope,
     );
+    const backend = await this.#selectBackend(
+      target,
+      installation,
+      options?.signal,
+      "resolve_analysis_profile",
+    );
+    if (!backend.ok) return backend;
     const resolved = await resolveGhidraAnalysisProfile(
       target,
       GHIDRA_PROVIDER_IDENTITY,
@@ -394,7 +429,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       options?.signal,
       this.config.ghidraLanguageOverride,
       this.config.ghidraDisabledAnalyzers,
-      JAVA_BACKEND,
+      backend.value.identity,
     );
     if (!resolved.ok || resolved.value.profile === null) return resolved;
     const override = this.config.ghidraLanguageOverride;
@@ -488,6 +523,13 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         signal,
         resourceOwner,
       );
+      const backend = await this.#selectBackend(
+        target,
+        installation,
+        signal,
+        "create_analysis_client",
+      );
+      if (!backend.ok) throw backend.error;
       const created = createGhidraProviderClient({
         config: this.config,
         environment: this.environment,
@@ -496,11 +538,94 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         admission: admitted.value,
         ...(context === undefined ? {} : { context }),
         installation,
+        backend: backend.value.launcher,
         signal,
       });
       if (!created.ok) throw created.error;
       return created.value;
     }, "ghidra");
+  }
+
+  /**
+   * The single backend decision for a target. Java-only import modes never reach
+   * pyGhidra; a forced pyGhidra refuses them instead of silently switching.
+   */
+  async #selectBackend(
+    target: BinaryTarget,
+    installation: GhidraInstallationInspection,
+    signal: AbortSignal | undefined,
+    operation: string,
+  ): Promise<Result<SelectedGhidraBackend, AnalysisError>> {
+    const forced = this.config.ghidraBackend === "pyghidra";
+    if (
+      installation.status !== "available" ||
+      installation.platform === "win32" ||
+      this.config.ghidraBackend === "java"
+    )
+      return ok(JAVA_SELECTION);
+    if (!pyGhidraSupportsTarget(target))
+      return forced
+        ? err(
+            new AnalysisUnsupportedTargetError(
+              operation,
+              target.path,
+              PYGHIDRA_UNSUPPORTED_TARGET_REASON,
+            ),
+          )
+        : ok(JAVA_SELECTION);
+    const availability = await this.#probePyGhidra(
+      installation.installDir,
+      signal,
+      operation,
+    );
+    try {
+      const selection = resolveGhidraBackend(
+        this.config,
+        availability,
+        installation.platform,
+      );
+      return selection.selected === "pyghidra" && availability.available
+        ? ok({
+            identity: { kind: "pyghidra", version: selection.pyghidraVersion },
+            launcher: {
+              kind: "pyghidra",
+              pythonPath: availability.pythonPath,
+            },
+          })
+        : ok(JAVA_SELECTION);
+    } catch (cause: unknown) {
+      return err(
+        new ProviderAdapterError("ghidra", operation, {
+          cause,
+          diagnostics: { reason: providerFailureText(cause) },
+        }),
+      );
+    }
+  }
+
+  async #probePyGhidra(
+    installDir: string,
+    callerSignal: AbortSignal | undefined,
+    operation: string,
+  ): Promise<PyGhidraAvailability> {
+    const probe = (this.#pyGhidraAvailability ??= this.pyGhidraProbe(
+      this.config.pyghidraPythonPath,
+      installDir,
+      this.#lifetime.signal,
+      this.environment,
+    ));
+    try {
+      const availability = await probe;
+      if (callerSignal?.aborted)
+        throw new AnalysisCancelledError(operation, {
+          cause: callerSignal.reason,
+        });
+      return availability;
+    } catch (cause: unknown) {
+      if (this.#pyGhidraAvailability === probe)
+        this.#pyGhidraAvailability = undefined;
+      throw cause;
+    }
   }
 
   async #runInspectionWork<T>(
