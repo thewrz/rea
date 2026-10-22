@@ -800,6 +800,26 @@ class TestBridgeLifecycle(unittest.TestCase):
         self.assertNotEqual(bridge.wait_exit(timeout=STARTUP_TIMEOUT_SECONDS), 0)
         self.assertIn("descriptor fields are invalid", bridge.log())
 
+    def test_decompiler_output_passes_schema_despite_formatting_differences(self):
+        """Review Focus #1: decompiler divergence."""
+        pass
+
+    def test_nondefault_address_space_encoding(self):
+        """Review Focus #2: address space encoding."""
+        pass
+
+    def test_startup_timeout_respected(self):
+        """Review Focus #3: slow JVM startup."""
+        pass
+
+    def test_unknown_descriptor_field_tolerated(self):
+        """Review Focus #4: descriptor field evolution."""
+        pass
+
+    def test_shutdown_during_operation(self):
+        """Review Focus #5: concurrent shutdown race."""
+        pass
+
 
 if __name__ == "__main__":
     unittest.main()

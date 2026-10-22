@@ -227,6 +227,21 @@ For provider selection, see the [CLI guide](docs/cli.md#choose-a-provider).
 Check [release availability](docs/installation.md#released-package-and-main)
 for features added since the latest npm release.
 
+### pyGhidra Backend (experimental)
+
+REA can use pyGhidra (`Ghidra/Features/PyGhidra` in the Ghidra repository)
+as an alternative Ghidra backend. When pyGhidra is installed, REA auto-selects
+it. Override with `REA_GHIDRA_BACKEND`:
+
+- `auto` (default) — use pyGhidra if available, fall back to Java
+- `java` — always use the Java HeadlessScript bridge
+- `pyghidra` — always use pyGhidra (fails if not installed)
+
+Requirements: Python 3.10+, `pip install pyghidra`, Ghidra installation.
+Set `REA_PYGHIDRA_PYTHON` to use a specific Python interpreter (default: `python3`).
+
+Unix-only. Windows always uses the Java bridge.
+
 ## Showcases
 
 [![Illustrations of the DX-Ball sound-pan, Notion clipboard-bridge, and TH04 bullet-ring showcases](docs/assets/rea-showcases.png)](https://rea.tools/showcase/)
