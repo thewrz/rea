@@ -23,6 +23,7 @@ import {
   recommendedMcpToolTimeoutMs,
   recommendedMcpToolTimeoutSeconds,
   type McpToolTimeoutInputs,
+  CLIENTS_WITH_REQUEST_DEADLINES,
 } from "../mcpStartupPolicy.js";
 import {
   clientRegistrationPackageReference,
@@ -260,16 +261,17 @@ export const readClientRegistrationInspections = async (
             }
           : client;
       const registration = parseRegistration(raw, effectiveClient);
-      const registrationEnvironment =
-        client.name === "kimi" || client.name === "codex"
-          ? await clientRegistrationEnvironmentDetailsWithBudget(
-              parsed,
-              {},
-              "effective",
-              options.resolveProviderRequestBudget,
-              options.platform,
-            )
-          : undefined;
+      const registrationEnvironment = CLIENTS_WITH_REQUEST_DEADLINES.has(
+        client.name,
+      )
+        ? await clientRegistrationEnvironmentDetailsWithBudget(
+            parsed,
+            {},
+            "effective",
+            options.resolveProviderRequestBudget,
+            options.platform,
+          )
+        : undefined;
       if (
         registrationEnvironment !== undefined &&
         !registrationEnvironment.ok
@@ -543,31 +545,66 @@ const configuredStatus = (
         remediation: policyRemediation ?? remediation(client),
       };
 
+/** Where a client keeps REA's per-request deadline, and in which unit. */
+const clientRequestDeadline = (
+  client: SetupClient,
+  registration: z.output<typeof registrationSchema>,
+):
+  | { setting: string; unit: "ms" | "seconds"; value: number | bigint }
+  | undefined => {
+  switch (client.name) {
+    case "kimi":
+      return registration.toolTimeoutMs === undefined
+        ? undefined
+        : {
+            setting: "toolTimeoutMs",
+            unit: "ms",
+            value: registration.toolTimeoutMs,
+          };
+    case "codex":
+      return registration.tool_timeout_sec === undefined
+        ? undefined
+        : {
+            setting: "tool_timeout_sec",
+            unit: "seconds",
+            value: registration.tool_timeout_sec,
+          };
+    case "pi":
+    case "opencode": {
+      // The passthrough schema keeps `timeout`; only a positive number is a deadline
+      // (OpenCode's phased `{ startup, catalog, execution }` table is left alone).
+      const value: unknown = registration.timeout;
+      return typeof value === "number" && Number.isFinite(value) && value > 0
+        ? {
+            setting: "timeout",
+            unit: client.name === "pi" ? "seconds" : "ms",
+            value,
+          }
+        : undefined;
+    }
+    default:
+      return undefined;
+  }
+};
+
 const timeoutAdvisory = (
   client: SetupClient,
   registration: z.output<typeof registrationSchema>,
   timeoutInputs: McpToolTimeoutInputs,
 ): string | undefined => {
-  const toolTimeout =
-    client.name === "kimi"
-      ? registration.toolTimeoutMs
-      : client.name === "codex"
-        ? registration.tool_timeout_sec
-        : undefined;
-  if (toolTimeout === undefined) return undefined;
+  const deadline = clientRequestDeadline(client, registration);
+  if (deadline === undefined) return undefined;
   const providerAllowance = mcpProviderDeadlineAllowanceMs(timeoutInputs);
-  const isKimi = client.name === "kimi";
+  const inMs = deadline.unit === "ms";
   // A bigint is beyond the safe Number range, so rounding cannot cross the allowance.
-  const toolTimeoutMs = Number(toolTimeout) * (isKimi ? 1 : 1000);
+  const toolTimeoutMs = Number(deadline.value) * (inMs ? 1 : 1000);
   if (toolTimeoutMs >= providerAllowance) return undefined;
-  const setting = isKimi ? "toolTimeoutMs" : "tool_timeout_sec";
-  const currentValue = isKimi
-    ? `${String(toolTimeout)} ms`
-    : `${String(toolTimeout)} seconds`;
-  const recommendedValue = isKimi
+  const { setting } = deadline;
+  const currentValue = `${String(deadline.value)} ${deadline.unit}`;
+  const recommendedValue = inMs
     ? `${String(recommendedMcpToolTimeoutMs(timeoutInputs))} ms`
     : `${String(recommendedMcpToolTimeoutSeconds(timeoutInputs))} seconds`;
-  const headroom = isKimi
+  const headroom = inMs
     ? `${String(MCP_STARTUP_POLICY.toolOperationHeadroomMs)} ms`
     : `${String(MCP_STARTUP_POLICY.toolOperationHeadroomMs / 1000)} seconds`;
   return `The configured ${setting} (${currentValue}) is shorter than REA's known provider allowance (${String(providerAllowance)} ms), so provider startup or an upstream request may exceed this client deadline. REA recommends ${setting} = ${recommendedValue} to cover that allowance plus ${headroom} of operation headroom; this additional headroom is a recommendation, not a guarantee for every analysis.`;

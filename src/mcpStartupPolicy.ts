@@ -18,6 +18,19 @@ export const MCP_STARTUP_POLICY = {
   doctorStderrBytes: 64 * 1024,
 } as const;
 
+/**
+ * Clients whose REA registration carries a per-request deadline derived from
+ * the provider budget: Codex (`tool_timeout_sec`), Kimi (`toolTimeoutMs`), Pi
+ * (`timeout`, seconds) and OpenCode (`timeout`, milliseconds). Setup writes or
+ * preserves it; doctor reads the same budget to advise on a short one.
+ */
+export const CLIENTS_WITH_REQUEST_DEADLINES: ReadonlySet<string> = new Set([
+  "codex",
+  "kimi",
+  "pi",
+  "opencode",
+]);
+
 /** Parsed startup and upstream request budgets affecting a client's tool deadline. */
 export interface McpToolTimeoutInputs {
   readonly analysisProvider: AnalysisProviderSelector;

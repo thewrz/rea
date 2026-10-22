@@ -384,9 +384,10 @@ it("retains legacy OpenCode environment when migrating into a native server tabl
     "opencode",
   );
   expect(parsed.legacyServers).toEqual({});
-  expect(parsed.servers.rea).toEqual(
-    clientRegistrationEntry("opencode_v2", ["rea", "mcp"], custom),
-  );
+  expect(parsed.servers.rea).toEqual({
+    ...clientRegistrationEntry("opencode_v2", ["rea", "mcp"], custom),
+    timeout: 450_000,
+  });
   expect(
     await configureClientConfiguration(client, {}, ["rea", "mcp"]),
   ).toEqual({ status: "unchanged" });

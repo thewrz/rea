@@ -13,6 +13,7 @@ import {
 import { dirname, join } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { parse as parseJsonc, type ParseError } from "jsonc-parser";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -198,6 +199,135 @@ describe("Codex MCP tool deadlines", () => {
     const configured = await readFile(configPath, "utf8");
     expect(configured).toContain("startup_timeout_sec = 5");
     expect(configured).toContain("tool_timeout_sec = 10");
+  });
+});
+
+describe("Pi and OpenCode MCP request deadlines", () => {
+  const readPiRegistration = async (configPath: string) =>
+    z
+      .object({
+        mcpServers: z.object({ rea: z.record(z.string(), z.unknown()) }),
+      })
+      .parse(JSON.parse(await readFile(configPath, "utf8"))).mcpServers.rea;
+  const readOpenCodeRegistration = async (configPath: string) =>
+    z
+      .object({ mcp: z.object({ rea: z.record(z.string(), z.unknown()) }) })
+      .parse(JSON.parse(await readFile(configPath, "utf8"))).mcp.rea;
+
+  it("derives the Pi request deadline in seconds from the Ghidra startup allowance", async () => {
+    const home = await createTestTempDirectory("rea-pi-long-timeout-");
+    roots.push(home);
+    const configPath = join(home, ".pi/agent/mcp.json");
+    await mkdir(dirname(configPath), { recursive: true });
+    expect(
+      await configureClientConfiguration(
+        { name: "pi", configPath, format: "pi" },
+        { REA_GHIDRA_STARTUP_TIMEOUT_MS: "2700001" },
+        ["rea", "mcp"],
+      ),
+    ).toMatchObject({ status: "configured" });
+    expect(await readPiRegistration(configPath)).toMatchObject({
+      type: "stdio",
+      command: "rea",
+      args: ["mcp"],
+      timeout: 2821,
+    });
+  });
+
+  it("preserves a positive caller-selected Pi timeout and then leaves the file alone", async () => {
+    const home = await createTestTempDirectory("rea-pi-custom-timeout-");
+    roots.push(home);
+    const configPath = join(home, ".pi/agent/mcp.json");
+    await mkdir(dirname(configPath), { recursive: true });
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            type: "stdio",
+            command: "old-rea",
+            args: ["mcp"],
+            timeout: 10,
+          },
+        },
+      }),
+    );
+    expect(
+      await configureClientConfiguration(
+        { name: "pi", configPath, format: "pi" },
+        {},
+        ["rea", "mcp"],
+      ),
+    ).toMatchObject({ status: "configured" });
+    expect(await readPiRegistration(configPath)).toMatchObject({
+      command: "rea",
+      timeout: 10,
+    });
+    expect(
+      await configureClientConfiguration(
+        { name: "pi", configPath, format: "pi" },
+        {},
+        ["rea", "mcp"],
+      ),
+    ).toEqual({ status: "unchanged" });
+  });
+
+  it("derives the OpenCode request deadline in milliseconds from the Ghidra startup allowance", async () => {
+    const home = await createTestTempDirectory("rea-opencode-long-timeout-");
+    roots.push(home);
+    const configPath = join(home, ".config/opencode/opencode.json");
+    await mkdir(dirname(configPath), { recursive: true });
+    expect(
+      await configureClientConfiguration(
+        { name: "opencode", configPath, format: "opencode" },
+        { REA_GHIDRA_STARTUP_TIMEOUT_MS: "2700001" },
+        ["rea", "mcp"],
+      ),
+    ).toMatchObject({ status: "configured" });
+    expect(await readOpenCodeRegistration(configPath)).toMatchObject({
+      type: "local",
+      command: ["rea", "mcp"],
+      enabled: true,
+      timeout: 2820001,
+    });
+  });
+
+  it("preserves a positive caller-selected OpenCode timeout and then leaves the file alone", async () => {
+    const home = await createTestTempDirectory("rea-opencode-custom-timeout-");
+    roots.push(home);
+    const configPath = join(home, ".config/opencode/opencode.json");
+    await mkdir(dirname(configPath), { recursive: true });
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        mcp: {
+          rea: {
+            type: "local",
+            command: ["old-rea", "mcp"],
+            enabled: true,
+            timeout: 1_020_000,
+          },
+        },
+      }),
+    );
+    expect(
+      await configureClientConfiguration(
+        { name: "opencode", configPath, format: "opencode" },
+        {},
+        ["rea", "mcp"],
+      ),
+    ).toMatchObject({ status: "configured" });
+    expect(await readOpenCodeRegistration(configPath)).toMatchObject({
+      command: ["rea", "mcp"],
+      timeout: 1_020_000,
+    });
+    expect(
+      await configureClientConfiguration(
+        { name: "opencode", configPath, format: "opencode" },
+        {},
+        ["rea", "mcp"],
+      ),
+    ).toEqual({ status: "unchanged" });
   });
 });
 

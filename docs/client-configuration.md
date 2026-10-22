@@ -205,6 +205,14 @@ using a relative override. Pi has no profiles: `OMP_PROFILE`, `PI_PROFILE`,
 Pi registration. Doctor accepts an omitted `type` for stdio but reports a
 non-stdio type as invalid; `enabled: false` stays disabled.
 
+Pi applies its `timeout` to every request, in seconds, and defaults to 60, well
+under a provider startup. New registrations therefore carry a `timeout` derived
+from REA's known provider allowance plus 120 seconds of operation headroom (450
+by default; 2821 for an explicit 2700000 ms Ghidra startup timeout), on the
+same basis as Codex's `tool_timeout_sec`. Setup preserves a positive `timeout`
+already in the `rea` entry, and doctor keeps it aligned while reporting a
+non-blocking advisory when it is shorter than the known provider allowance.
+
 REA configures only the user scope. Pi also reads `.pi/mcp.json` in trusted
 projects; a same-name project entry can replace the user entry or override its
 enabled state and exposure. Check that file if the user registration is aligned
@@ -422,6 +430,14 @@ JSONC exist. The ordinary XDG global configuration still participates when a
 custom directory is selected. Doctor checks the merged user registration; uninstall removes
 REA-owned entries from every applicable user file so an older entry cannot
 become active again. Malformed applicable files block setup before changes.
+OpenCode applies the entry's `timeout` to every MCP request, in milliseconds,
+and defaults to 5000, so new registrations carry a `timeout` derived from REA's
+known provider allowance plus 120000 ms of operation headroom (450000 by
+default; 2820001 for an explicit 2700001 ms Ghidra startup timeout), as Kimi's
+`toolTimeoutMs` is. Setup preserves a caller-selected `timeout`, whether a
+positive number or OpenCode's phased `{ "startup", "catalog", "execution" }`
+table, and doctor reports a non-blocking advisory when a numeric one is shorter
+than the known provider allowance.
 
 Grok Build loads `[mcp_servers.rea]` from `$GROK_HOME/config.toml`, or from
 `~/.grok/config.toml` when `GROK_HOME` is unset or empty. Setup edits that server

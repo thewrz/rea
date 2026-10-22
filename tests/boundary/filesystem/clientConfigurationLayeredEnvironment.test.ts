@@ -37,6 +37,7 @@ const layered = async (lower: unknown, upper: unknown) => {
       mcp: {
         rea: {
           ...clientRegistrationEntry("opencode", command, {}),
+          timeout: 450_000,
           environment,
         },
       },
