@@ -583,7 +583,7 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
   }
 }
 
-const ownedGhidraLaunch = (
+export const ownedGhidraLaunch = (
   spawned: SpawnedOwnedProviderProcess,
   paths: ReturnType<typeof ghidraRuntimePaths>,
   platform: NodeJS.Platform,
@@ -660,7 +660,7 @@ const ghidraBatchStep = <T>(step: () => T): T => {
   }
 };
 
-const cleanupStartedProcess = (
+export const cleanupStartedProcess = (
   started: SpawnedOwnedProviderProcess,
   platform: NodeJS.Platform,
 ): Promise<ProcessCleanupResult> =>
@@ -865,7 +865,7 @@ export const ghidraHeadlessArguments = (
   ];
 };
 
-const ghidraRuntimePaths = (runtimeRoot: string) => ({
+export const ghidraRuntimePaths = (runtimeRoot: string) => ({
   projectRoot: join(runtimeRoot, "project"),
   homeRoot: join(runtimeRoot, "home"),
   tempRoot: join(runtimeRoot, "tmp"),
@@ -886,7 +886,7 @@ const ghidraRuntimePaths = (runtimeRoot: string) => ({
  * that no supported JDK was found. Create the release directory while this
  * process still owns the runtime, leaving Ghidra only a file write inside it.
  */
-const createGhidraRuntimeDirectories = async (
+export const createGhidraRuntimeDirectories = async (
   paths: ReturnType<typeof ghidraRuntimePaths>,
   platform: NodeJS.Platform,
   configReleaseDirectory: string,
@@ -922,7 +922,7 @@ const createGhidraRuntimeDirectories = async (
   );
 };
 
-const writeGhidraRuntimeFile = async (
+export const writeGhidraRuntimeFile = async (
   path: string,
   content: string,
   platform: NodeJS.Platform,
