@@ -1,0 +1,62 @@
+{
+  "name": "REA Ghidra bridge",
+  "run_id": "98d3afb2-944b-41c0-b229-cd2f8d2e3099",
+  "profile_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "provider": {
+    "id": "ghidra",
+    "version": "12.1.2"
+  },
+  "read_only": false,
+  "analysis_complete": true,
+  "analysis_timed_out": false,
+  "pdb": {
+    "file": null,
+    "guid": null,
+    "age": null,
+    "signature": null,
+    "version": null,
+    "loaded": null
+  },
+  "capabilities": [
+    "read_binary_inventory_summary",
+    "annotate_native_function",
+    "set_address_name",
+    "set_addresses_names",
+    "inspect_native_load_image",
+    "read_bytes",
+    "search_bytes",
+    "address_to_file_offset",
+    "ping",
+    "shutdown",
+    "address_name",
+    "list_documents",
+    "list_names",
+    "list_procedures",
+    "list_segments",
+    "list_strings",
+    "procedure_address",
+    "resolve_containing_procedure",
+    "search_procedures",
+    "search_strings",
+    "analyze_function",
+    "procedure_assembly",
+    "procedure_callees",
+    "procedure_callers",
+    "procedure_info",
+    "procedure_pseudo_code",
+    "read_function_instructions",
+    "inspect_native_instruction",
+    "inspect_native_data_type",
+    "resolve_native_call_targets",
+    "procedure_references",
+    "xrefs"
+  ],
+  "target": {
+    "name": "target-70c336a12aa7.bin",
+    "language_id": "x86:LE:64:default",
+    "compiler_spec_id": "gcc",
+    "image_base": "0x400000",
+    "default_address_space": "ram",
+    "sha256": "70c336a12aa712280240d7353b4e45be3dc5a4664a0df273d1a6d22d98ccbf3a"
+  }
+}

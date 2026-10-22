@@ -1,0 +1,245 @@
+[
+  {
+    "address": "EXTERNAL:0x1",
+    "value": "<EXTERNAL>::__libc_start_main",
+    "procedure": {
+      "external": true,
+      "thunk": false,
+      "thunk_target": null
+    }
+  },
+  {
+    "address": "EXTERNAL:0x2",
+    "value": "<EXTERNAL>::strlen",
+    "procedure": {
+      "external": true,
+      "thunk": false,
+      "thunk_target": null
+    }
+  },
+  {
+    "address": "EXTERNAL:0x3",
+    "value": "<EXTERNAL>::printf",
+    "procedure": {
+      "external": true,
+      "thunk": false,
+      "thunk_target": null
+    }
+  },
+  {
+    "address": "EXTERNAL:0x4",
+    "value": "<EXTERNAL>::_ITM_deregisterTMCloneTable",
+    "procedure": {
+      "external": true,
+      "thunk": false,
+      "thunk_target": null
+    }
+  },
+  {
+    "address": "EXTERNAL:0x5",
+    "value": "<EXTERNAL>::_ITM_registerTMCloneTable",
+    "procedure": {
+      "external": true,
+      "thunk": false,
+      "thunk_target": null
+    }
+  },
+  {
+    "address": "EXTERNAL:0x6",
+    "value": "<EXTERNAL>::__gmon_start__",
+    "procedure": {
+      "external": true,
+      "thunk": false,
+      "thunk_target": null
+    }
+  },
+  {
+    "address": "0x401000",
+    "value": "_init",
+    "procedure": {
+      "external": false,
+      "thunk": false,
+      "thunk_target": null
+    }
+  },
+  {
+    "address": "0x401020",
+    "value": "FUN_00401020",
+    "procedure": {
+      "external": false,
+      "thunk": false,
+      "thunk_target": null
+    }
+  },
+  {
+    "address": "0x401030",
+    "value": "<EXTERNAL>::strlen",
+    "procedure": {
+      "external": false,
+      "thunk": true,
+      "thunk_target": "0x405010"
+    }
+  },
+  {
+    "address": "0x401040",
+    "value": "<EXTERNAL>::printf",
+    "procedure": {
+      "external": false,
+      "thunk": true,
+      "thunk_target": "0x405018"
+    }
+  },
+  {
+    "address": "0x401050",
+    "value": "_start",
+    "procedure": {
+      "external": false,
+      "thunk": false,
+      "thunk_target": null
+    }
+  },
+  {
+    "address": "0x401080",
+    "value": "_dl_relocate_static_pie",
+    "procedure": {
+      "external": false,
+      "thunk": false,
+      "thunk_target": null
+    }
+  },
+  {
+    "address": "0x401090",
+    "value": "_dl_relocate_static_pie_ifunc",
+    "procedure": {
+      "external": false,
+      "thunk": false,
+      "thunk_target": null
+    }
+  },
+  {
+    "address": "0x4010a0",
+    "value": "deregister_tm_clones",
+    "procedure": {
+      "external": false,
+      "thunk": false,
+      "thunk_target": null
+    }
+  },
+  {
+    "address": "0x4010d0",
+    "value": "register_tm_clones",
+    "procedure": {
+      "external": false,
+      "thunk": false,
+      "thunk_target": null
+    }
+  },
+  {
+    "address": "0x401110",
+    "value": "__do_global_dtors_aux",
+    "procedure": {
+      "external": false,
+      "thunk": false,
+      "thunk_target": null
+    }
+  },
+  {
+    "address": "0x401140",
+    "value": "frame_dummy",
+    "procedure": {
+      "external": false,
+      "thunk": true,
+      "thunk_target": "0x4010d0"
+    }
+  },
+  {
+    "address": "0x401146",
+    "value": "add",
+    "procedure": {
+      "external": false,
+      "thunk": false,
+      "thunk_target": null
+    }
+  },
+  {
+    "address": "0x40115a",
+    "value": "scale_by_three",
+    "procedure": {
+      "external": false,
+      "thunk": false,
+      "thunk_target": null
+    }
+  },
+  {
+    "address": "0x40116c",
+    "value": "main",
+    "procedure": {
+      "external": false,
+      "thunk": false,
+      "thunk_target": null
+    }
+  },
+  {
+    "address": "0x4011d0",
+    "value": "_fini",
+    "procedure": {
+      "external": false,
+      "thunk": false,
+      "thunk_target": null
+    }
+  },
+  {
+    "address": "0x405000",
+    "value": "<EXTERNAL>::__libc_start_main",
+    "procedure": {
+      "external": false,
+      "thunk": true,
+      "thunk_target": "EXTERNAL:0x1"
+    }
+  },
+  {
+    "address": "0x405008",
+    "value": "<EXTERNAL>::_ITM_deregisterTMCloneTable",
+    "procedure": {
+      "external": false,
+      "thunk": true,
+      "thunk_target": "EXTERNAL:0x4"
+    }
+  },
+  {
+    "address": "0x405010",
+    "value": "<EXTERNAL>::strlen",
+    "procedure": {
+      "external": false,
+      "thunk": true,
+      "thunk_target": "EXTERNAL:0x2"
+    }
+  },
+  {
+    "address": "0x405018",
+    "value": "<EXTERNAL>::printf",
+    "procedure": {
+      "external": false,
+      "thunk": true,
+      "thunk_target": "EXTERNAL:0x3"
+    }
+  },
+  {
+    "address": "0x405020",
+    "value": "<EXTERNAL>::__gmon_start__",
+    "procedure": {
+      "external": false,
+      "thunk": true,
+      "thunk_target": "EXTERNAL:0x6"
+    }
+  },
+  {
+    "address": "0x405028",
+    "value": "<EXTERNAL>::_ITM_registerTMCloneTable",
+    "procedure": {
+      "external": false,
+      "thunk": true,
+      "thunk_target": "EXTERNAL:0x5"
+    }
+  }
+]

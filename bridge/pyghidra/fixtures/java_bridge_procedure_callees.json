@@ -1,0 +1,10 @@
+{
+  "value": ["0x401030", "0x401040", "0x401146", "0x40115a"],
+  "limitations": [],
+  "relationship_coverage": {
+    "status": "complete",
+    "diagnostics": [
+      "Only resolved Ghidra call references are returned; unresolved computed or indirect calls remain unknown, while function classifications distinguish thunks and externals."
+    ]
+  }
+}

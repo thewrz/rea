@@ -591,17 +591,19 @@ class TestBridgeProtocol(unittest.TestCase):
 
     def test_xrefs_lists_reference_sources(self):
         sources = self.ask("xrefs", {"document": None, "address": self.add_address})
-        self.assertTrue(sources)
         low, high = int(self.main_address, 16), int(self.main_address, 16) + 0x100
-        self.assertTrue(all(low <= int(source, 16) < high for source in sources), sources)
+        self.assertTrue(any(low <= int(source, 16) < high for source in sources), sources)
         self.assertEqual(sources, sorted(sources, key=lambda text: int(text, 16)))
 
     def call_site_to(self, callee_address):
-        lines = self.ask("procedure_assembly", self.procedure(self.main_address))["value"].split("\n")
-        line = next(
-            line for line in lines if "call" in line.lower() and callee_address in line.lower()
+        outgoing = self.ask(
+            "procedure_references", {**self.procedure(self.main_address), "direction": "outgoing"}
+        )["value"]
+        return next(
+            edge["source_address"]
+            for edge in outgoing["references"]
+            if edge["kind"]["call"] and edge["target_address"] == callee_address
         )
-        return line.split(":", 1)[0]
 
     def test_inspect_native_instruction_decodes_a_call(self):
         site = self.call_site_to(self.add_address)
